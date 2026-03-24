@@ -1,10 +1,8 @@
-// app/api/seller-verification/route.ts
 import { NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma"; // adjust path
+import { prisma } from "@/lib/prisma";
 import { uploadOneImageFile, deleteImageByPublicId } from "../../utils/cloudinary";
 import { z } from "zod";
 
-// --- ZOD SCHEMAS ---
 const createVerificationSchema = z.object({
   userId: z.string().min(1, "User ID is required"),
   fullName: z.string().min(2, "Full name is required"),
@@ -19,22 +17,18 @@ const updateVerificationSchema = z.object({
   reviewNote: z.string().optional(),
 });
 
-// Allowed file types
 const ALLOWED_FILE_TYPES = ["image/jpeg", "image/png"];
 
-// --- POST ROUTE ---
 export async function POST(req: Request) {
   try {
     const data = await req.formData();
     const fields = Object.fromEntries(data.entries());
 
-    // Validate fields
     const parsed = createVerificationSchema.safeParse(fields);
     if (!parsed.success) {
       return NextResponse.json({ error: parsed.error }, { status: 400 });
     }
 
-    // Validate files
     const businessLicenseFile = data.get("businessLicense") as File | null;
     const idDocumentFile = data.get("idDocument") as File | null;
 
@@ -50,11 +44,9 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "ID Document must be JPG/PNG" }, { status: 400 });
     }
 
-    // Upload to Cloudinary
     const businessLicense = await uploadOneImageFile(businessLicenseFile, { subfolder: "verification" });
     const idDocument = await uploadOneImageFile(idDocumentFile, { subfolder: "verification" });
 
-    // Save to database
     const verification = await prisma.sellerVerification.create({
       data: {
         userId: parsed.data.userId,
@@ -78,7 +70,6 @@ export async function POST(req: Request) {
   }
 }
 
-// --- PATCH ROUTE ---
 export async function PATCH(req: Request) {
   try {
     const body = await req.json();
@@ -90,7 +81,6 @@ export async function PATCH(req: Request) {
 
     const { userId, status, reviewNote } = parsed.data;
 
-    // Fetch existing verification
     const existing = await prisma.sellerVerification.findUnique({ where: { userId } });
     if (!existing) {
       return NextResponse.json({ error: "Seller verification not found" }, { status: 404 });
@@ -105,7 +95,6 @@ export async function PATCH(req: Request) {
       },
     });
 
-    // Optionally: mark SellerAccount as verified if approved
     if (status === "APPROVED") {
       await prisma.sellerAccount.updateMany({
         where: { userId },
