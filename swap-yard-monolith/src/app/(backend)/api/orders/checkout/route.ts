@@ -17,8 +17,6 @@ async function getCookie(req: Request, name: string) {
   );
 }
 
-
-
 async function getUser(req: Request) {
   const token = await getCookie(req, "session");
   if (!token) return null;
@@ -29,10 +27,9 @@ async function getUser(req: Request) {
   if (!userId) return null;
 
   return prisma.user.findUnique({
-    where: { id: userId, role: "BUYER"},
+    where: { id: userId, role: "BUYER" },
   });
 }
-
 
 export async function POST(req: Request) {
   try {
@@ -41,7 +38,7 @@ export async function POST(req: Request) {
     if (!user) {
       return NextResponse.json({ message: "Unauthorized" }, { status: 401 });
     }
-    //Error line
+
     const body = await req.json();
     const parsed = checkoutSchema.safeParse(body);
 
@@ -55,37 +52,43 @@ export async function POST(req: Request) {
       );
     }
 
-    const { items, pickupLocation, pickupNote } = parsed.data;
+    const { pickupLocation, pickupNote } = parsed.data;
 
-    //  Fetch listings
-    const listingIds = items.map((i) => i.listingId);
-
-    const listings = await prisma.listing.findMany({
-      where: {
-        id: { in: listingIds },
-        status: "AVAILABLE",
-      },
-      select: {
-        id: true,
-        name: true,
-        price: true,
-        sellerId: true,
+    const cart = await prisma.cart.findUnique({
+      where: { buyerId: user.id },
+      include: {
+        items: {
+          include: {
+            listing: {
+              select: {
+                id: true,
+                name: true,
+                price: true,
+                sellerId: true,
+                status: true,
+              },
+            },
+          },
+        },
       },
     });
 
-    if (listings.length !== items.length) {
+    if (!cart || cart.items.length === 0) {
       return NextResponse.json(
-        { message: "Some items unavailable" },
+        { message: "Cart is empty" },
         { status: 400 }
       );
     }
 
 
-    // Calculate totals
     let subtotal = 0;
 
-    const orderItemsData = items.map((item) => {
-      const listing = listings.find((l) => l.id === item.listingId)!;
+    const orderItemsData = cart.items.map((item) => {
+      const listing = item.listing;
+
+      if (listing.status !== "AVAILABLE") {
+        throw new Error("Some items are no longer available");
+      }
 
       const total = listing.price * item.quantity;
       subtotal += total;
@@ -100,10 +103,9 @@ export async function POST(req: Request) {
     });
 
     const deliveryFee = 0;
-    const platformCommission = subtotal * 0.05;
+    const platformCommission = subtotal * 1.5;
     const totalAmount = subtotal + deliveryFee;
 
-    // Create Order
     const order = await prisma.order.create({
       data: {
         buyerId: user.id,
@@ -133,20 +135,27 @@ export async function POST(req: Request) {
       },
     });
 
-    // Initialize Paystack: Fails for now since no paystack integration yet
-    const paystackRes = await fetch("https://api.paystack.co/transaction/initialize", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        email: user.email,
-        amount: Math.round(totalAmount * 100), // kobo
-        reference: order.payment?.id, // Priority key
-        callback_url: `${process.env.NEXT_PUBLIC_APP_URL}/payment/success`,
-      }),
+    await prisma.cartItem.deleteMany({
+      where: { cartId: cart.id },
     });
+
+    // ✅ PAYSTACK INIT: Pending final stage of application
+    const paystackRes = await fetch(
+      "https://api.paystack.co/transaction/initialize",
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          email: user.email,
+          amount: Math.round(totalAmount * 100),
+          reference: order.payment?.id,
+          callback_url: `${process.env.NEXT_PUBLIC_APP_URL}/payment/success`,
+        }),
+      }
+    );
 
     const paystackData = await paystackRes.json();
 
