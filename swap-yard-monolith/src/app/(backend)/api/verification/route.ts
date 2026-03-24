@@ -26,7 +26,21 @@ export async function POST(req: Request) {
 
     const parsed = createVerificationSchema.safeParse(fields);
     if (!parsed.success) {
-      return NextResponse.json({ error: parsed.error }, { status: 400 });
+      return NextResponse.json({ error: parsed.error.flatten().fieldErrors }, { status: 400 });
+    }
+
+    const { userId, fullName, businessName, vatNumber, nin } = parsed.data;
+
+    const existing = await prisma.sellerVerification.findUnique({ where: { userId } });
+    if (existing) {
+      if (existing.businessLicensePublicId) {
+        await deleteImageByPublicId(existing.businessLicensePublicId);
+      }
+      if (existing.idDocumentPublicId) {
+        await deleteImageByPublicId(existing.idDocumentPublicId);
+      }
+
+      await prisma.sellerVerification.delete({ where: { userId } });
     }
 
     const businessLicenseFile = data.get("businessLicense") as File | null;
@@ -49,11 +63,11 @@ export async function POST(req: Request) {
 
     const verification = await prisma.sellerVerification.create({
       data: {
-        userId: parsed.data.userId,
-        fullName: parsed.data.fullName,
-        businessName: parsed.data.businessName,
-        vatNumber: parsed.data.vatNumber,
-        nin: parsed.data.nin,
+        userId,
+        fullName,
+        businessName,
+        vatNumber,
+        nin,
         businessLicenseUrl: businessLicense.url,
         businessLicensePublicId: businessLicense.public_id,
         idDocumentUrl: idDocument.url,
