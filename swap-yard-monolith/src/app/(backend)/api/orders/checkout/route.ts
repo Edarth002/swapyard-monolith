@@ -85,7 +85,6 @@ export async function POST(req: Request) {
 
     const orderItemsData = cart.items.map((item) => {
       const listing = item.listing;
-
       if (listing.status !== "AVAILABLE") {
         throw new Error("Some items are no longer available");
       }
