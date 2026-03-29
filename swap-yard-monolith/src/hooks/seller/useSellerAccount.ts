@@ -159,22 +159,28 @@ export function useSellerAccount() {
       setError("");
       setSuccess("");
 
-      // Send the complete payload mapped to the DB schema
-      const payload = {
-        firstname: formData.firstName,
-        lastname: formData.lastName,
-        phoneNumber: formData.phone,
-        state: formData.stateCountry,
-        bio: formData.bio,
-        deliveryAddress: formData.deliveryAddress,
-        bankName: formData.bankName,
-        accountHolder: formData.accountHolder,
-        accountNumber: formData.accountNumber,
-        accountType: formData.accountType
-      };
+      // This prevents Zod from throwing validation errors on empty fields in other sections!
+      const payload: Record<string, string> = {};
 
+      if (section === "personal") {
+        payload.firstname = formData.firstName;
+        payload.lastname = formData.lastName;
+        payload.phoneNumber = formData.phone;
+        payload.bio = formData.bio;
+      } 
+      else if (section === "address") {
+        payload.deliveryAddress = formData.deliveryAddress;
+        payload.state = formData.stateCountry;
+      } 
+      else if (section === "payment") {
+        payload.bankName = formData.bankName;
+        payload.accountName = formData.accountHolder; 
+        payload.accountNumber = formData.accountNumber;
+      }
+
+      // 2. Send the sanitized payload
       const res = await fetch("/api/auth/me", {
-        method: "PUT",
+        method: "PATCH",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
         body: JSON.stringify(payload),
