@@ -196,7 +196,7 @@ export function useSellerAccount() {
         throw new Error(data.message || "Failed to save changes");
       }
 
-      setOriginalFormData(formData); // Sync original data so cancel works correctly
+      setOriginalFormData(formData); 
       setSuccess("Profile updated successfully!");
       setEditingSection(null);
 
