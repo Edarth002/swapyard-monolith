@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { verifyToken } from "@/lib/token";
 import { uploadOneImageFile } from "@/app/(backend)/utils/cloudinary";
 import { createCategorySchema } from "./schema";
+import { createSlug } from "@/lib/slugGenerator";
 
 export const runtime = "nodejs";
 
@@ -65,6 +66,23 @@ export async function POST(req: Request) {
       );
     }
 
+    const { name } = parsed.data;
+
+    let slug = createSlug(name);
+
+    let existing = await prisma.category.findUnique({
+      where: { slug },
+    });
+
+    let counter = 1;
+    while (existing) {
+      slug = `${createSlug(name)}-${counter}`;
+      existing = await prisma.category.findUnique({
+        where: { slug },
+      });
+      counter++;
+    }
+
     const file = formData.get("image");
 
     if (file instanceof File && file.size > 0) {
@@ -75,7 +93,8 @@ export async function POST(req: Request) {
 
     const category = await prisma.category.create({
       data: {
-        name: parsed.data.name,
+        name,
+        slug, 
         image: uploadedImage?.url || null,
         publicId: uploadedImage?.public_id || null,
       },
