@@ -6,8 +6,8 @@ import {
 } from "@/app/(backend)/utils/cloudinary";
 import { prisma } from "@/lib/prisma";
 import { verifyToken } from "@/lib/token";
-import { redisClient } from "@/lib/redis";
 import { updateListingSchema } from "../schema";
+import { createSlug } from "@/lib/slugGenerator";
 
 export const runtime = "nodejs";
 
@@ -112,6 +112,225 @@ export async function GET(
   }
 }
 
+export async function PATCH(
+  req: Request,
+  ctx: { params: Promise<{ slug: string }> }
+) {
+  let newlyUploaded: Array<{ url: string; public_id: string }> = [];
+
+  try {
+    const { slug } = await ctx.params;
+
+    // 1. Authenticate
+    const auth = await getAuthenticatedSeller(req);
+    if ("error" in auth) return auth.error;
+    const { user } = auth;
+
+    // 2. Find listing by slug
+    const existing = await prisma.listing.findUnique({
+      where: { slug },
+      include: { images: true },
+    });
+
+    if (!existing) {
+      return NextResponse.json({ message: "Listing not found" }, { status: 404 });
+    }
+
+    // 3. Authorization
+    if (existing.sellerId !== user.id) {
+      return NextResponse.json({ message: "Forbidden" }, { status: 403 });
+    }
+
+    // 4. Parse form
+    const formData = await req.formData();
+
+    const rawInput = {
+      name:
+        formData.get("name") !== null
+          ? String(formData.get("name")).trim()
+          : undefined,
+      description:
+        formData.get("description") !== null
+          ? String(formData.get("description")).trim()
+          : undefined,
+      location: toNullableString(formData.get("location")),
+      state: toNullableString(formData.get("state")),
+      status:
+        formData.get("status") !== null
+          ? String(formData.get("status")).trim()
+          : undefined,
+      condition:
+        formData.get("condition") !== null
+          ? String(formData.get("condition")).trim()
+          : undefined,
+      price:
+        formData.get("price") !== null
+          ? Number(formData.get("price"))
+          : undefined,
+      negotiable:
+        formData.get("negotiable") !== null
+          ? String(formData.get("negotiable")) === "true"
+          : undefined,
+      offersDelivery:
+        formData.get("offersDelivery") !== null
+          ? String(formData.get("offersDelivery")) === "true"
+          : undefined,
+      contact: toNullableString(formData.get("contact")),
+      categoryId: toNullableString(formData.get("categoryId")),
+      replaceImages:
+        formData.get("replaceImages") !== null
+          ? String(formData.get("replaceImages")) === "true"
+          : false,
+    };
+
+    const validatedInput = updateListingSchema.safeParse(rawInput);
+
+    if (!validatedInput.success) {
+      return NextResponse.json(
+        {
+          message: "Input does not meet required schema",
+          errors: validatedInput.error.flatten().fieldErrors,
+        },
+        { status: 400 }
+      );
+    }
+
+    const {
+      name,
+      description,
+      location,
+      state,
+      status,
+      condition,
+      price,
+      negotiable,
+      offersDelivery,
+      contact,
+      categoryId,
+      replaceImages,
+    } = validatedInput.data;
+
+    // 5. Build update object
+    const data: Prisma.ListingUpdateInput = {};
+
+    if (name !== undefined) data.name = name;
+    if (description !== undefined) data.description = description;
+    if (location !== undefined) data.location = location;
+    if (state !== undefined) data.state = state;
+    if (status !== undefined) data.status = status;
+    if (condition !== undefined) data.condition = condition;
+    if (price !== undefined) data.price = price;
+    if (negotiable !== undefined) data.negotiable = negotiable;
+    if (offersDelivery !== undefined) data.offersDelivery = offersDelivery;
+    if (contact !== undefined) data.contact = contact;
+
+    // ✅ Slug update ONLY if name changed
+    if (name !== undefined && name !== existing.name) {
+      data.slug = createSlug(name);
+    }
+
+    // 6. Category handling
+    if (categoryId !== undefined) {
+      if (categoryId) {
+        const categoryExists = await prisma.category.findUnique({
+          where: { id: categoryId },
+          select: { id: true },
+        });
+
+        if (!categoryExists) {
+          return NextResponse.json(
+            { message: "Selected category does not exist" },
+            { status: 400 }
+          );
+        }
+
+        data.category = { connect: { id: categoryId } };
+      } else {
+        data.category = { disconnect: true };
+      }
+    }
+
+    // 7. Image handling
+    const images = formData
+      .getAll("images")
+      .filter(
+        (file): file is File => file instanceof File && file.size > 0
+      );
+
+    if (images.length > 0) {
+      newlyUploaded = await uploadManyImageFiles(images, {
+        subfolder: "listings",
+      });
+
+      data.images = replaceImages
+        ? {
+            deleteMany: {},
+            create: newlyUploaded.map((img) => ({
+              url: img.url,
+              publicId: img.public_id,
+            })),
+          }
+        : {
+            create: newlyUploaded.map((img) => ({
+              url: img.url,
+              publicId: img.public_id,
+            })),
+          };
+    }
+
+    // 8. Update using ID (IMPORTANT)
+    const listing = await prisma.listing.update({
+      where: { id: existing.id },
+      data,
+      include: {
+        images: true,
+        category: {
+          select: {
+            id: true,
+            name: true,
+            image: true,
+          },
+        },
+        seller: {
+          select: {
+            id: true,
+            firstname: true,
+            lastname: true,
+            image: true,
+          },
+        },
+      },
+    });
+
+    // 9. Cleanup old images
+    if (images.length > 0 && replaceImages) {
+      const oldPublicIds = existing.images
+        .map((img) => img.publicId)
+        .filter((id): id is string => Boolean(id));
+
+      if (oldPublicIds.length) {
+        await deleteManyByPublicIds(oldPublicIds);
+      }
+    }
+
+    return NextResponse.json(
+      { message: "Listing updated successfully", listing },
+      { status: 200 }
+    );
+  } catch (err) {
+    console.error("Error updating listing:", err);
+
+    // rollback uploads
+    if (newlyUploaded.length) {
+      const ids = newlyUploaded.map((img) => img.public_id).filter(Boolean);
+      if (ids.length) {
+        await deleteManyByPublicIds(ids);
+      }
+    }
+
+    return NextResponse.json({ message: "Server error" }, { status: 500 });
+  }
+}
 
 export async function DELETE(
   req: Request,
