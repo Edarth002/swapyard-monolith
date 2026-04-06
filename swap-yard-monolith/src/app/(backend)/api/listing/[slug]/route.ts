@@ -121,12 +121,11 @@ export async function PATCH(
   try {
     const { slug } = await ctx.params;
 
-    // 1. Authenticate
     const auth = await getAuthenticatedSeller(req);
     if ("error" in auth) return auth.error;
     const { user } = auth;
 
-    // 2. Find listing by slug
+    //Here you first locate listing by slug to get its ID and current images, then you perform the update using the ID. This way you can handle slug changes and image replacements correctly without losing track of the listing.
     const existing = await prisma.listing.findUnique({
       where: { slug },
       include: { images: true },
@@ -136,12 +135,10 @@ export async function PATCH(
       return NextResponse.json({ message: "Listing not found" }, { status: 404 });
     }
 
-    // 3. Authorization
     if (existing.sellerId !== user.id) {
       return NextResponse.json({ message: "Forbidden" }, { status: 403 });
     }
 
-    // 4. Parse form
     const formData = await req.formData();
 
     const rawInput = {
@@ -210,7 +207,7 @@ export async function PATCH(
       replaceImages,
     } = validatedInput.data;
 
-    // 5. Build update object
+
     const data: Prisma.ListingUpdateInput = {};
 
     if (name !== undefined) data.name = name;
@@ -224,12 +221,10 @@ export async function PATCH(
     if (offersDelivery !== undefined) data.offersDelivery = offersDelivery;
     if (contact !== undefined) data.contact = contact;
 
-    // ✅ Slug update ONLY if name changed
     if (name !== undefined && name !== existing.name) {
       data.slug = createSlug(name);
     }
 
-    // 6. Category handling
     if (categoryId !== undefined) {
       if (categoryId) {
         const categoryExists = await prisma.category.findUnique({
@@ -250,7 +245,6 @@ export async function PATCH(
       }
     }
 
-    // 7. Image handling
     const images = formData
       .getAll("images")
       .filter(
@@ -278,7 +272,6 @@ export async function PATCH(
           };
     }
 
-    // 8. Update using ID (IMPORTANT)
     const listing = await prisma.listing.update({
       where: { id: existing.id },
       data,
@@ -302,7 +295,6 @@ export async function PATCH(
       },
     });
 
-    // 9. Cleanup old images
     if (images.length > 0 && replaceImages) {
       const oldPublicIds = existing.images
         .map((img) => img.publicId)
@@ -320,7 +312,8 @@ export async function PATCH(
   } catch (err) {
     console.error("Error updating listing:", err);
 
-    // rollback uploads
+    //rollback newly uploaded images on cloudinary if something goes wrong during upload (Principle: Atomicity)
+
     if (newlyUploaded.length) {
       const ids = newlyUploaded.map((img) => img.public_id).filter(Boolean);
       if (ids.length) {
