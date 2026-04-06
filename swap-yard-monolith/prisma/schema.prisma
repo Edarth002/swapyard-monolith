@@ -69,6 +69,7 @@ model PasswordResetToken {
 model Listing {
   id             String            @id @default(cuid())
   name           String
+  slug           String            @unique @default("chrome-legged-teak-wooden-table")
   price          Float
   images         Image[]
   description    String
@@ -133,6 +134,7 @@ model Review {
 model Category {
   id        String    @id @default(cuid())
   name      String    @unique
+  slug      String    @unique @default("furniture")
   image     String?
   publicId  String?
   listings  Listing[]
