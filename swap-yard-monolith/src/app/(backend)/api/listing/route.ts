@@ -1,9 +1,10 @@
 import { NextResponse } from "next/server";
 import type { Prisma } from "@prisma/client";
-import { uploadManyImageFiles } from "@/app/(backend)/utils/cloudinary";
+import { deleteManyByPublicIds, uploadManyImageFiles } from "@/app/(backend)/utils/cloudinary";
 import { prisma } from "@/lib/prisma";
 import { verifyToken } from "@/lib/token";
 import { createListingSchema, getListingsSchema } from "./schema";
+import { createSlug } from "@/lib/slugGenerator";
 
 export const runtime = "nodejs";
 
@@ -28,21 +29,26 @@ export async function POST(req: Request) {
   let uploaded: Array<{ url: string; public_id: string }> = [];
 
   try {
+    // 1. Authentication Layer
     const token = await getCookie(req, "session");
-
-    if (!token) {
-      return NextResponse.json({ message: "Unauthorized" }, { status: 401 });
-    }
+    if (!token) return NextResponse.json({ message: "Unauthorized" }, { status: 401 });
 
     const payload = await verifyToken(token);
     const userId = typeof payload === "string" ? payload : payload?.userId;
+    if (!userId) return NextResponse.json({ message: "Unauthorized" }, { status: 401 });
 
-    if (!userId) {
-      return NextResponse.json({ message: "Unauthorized" }, { status: 401 });
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { id: true, role: true },
+    });
+
+    // 2. Authorization Layer (Principle: RBAC)
+    if (!user || user.role !== "SELLER") {
+      return NextResponse.json({ message: "Forbidden: Sellers only" }, { status: 403 });
     }
 
+    // 3. Validation Layer
     const formData = await req.formData();
-
     const rawInput = {
       name: String(formData.get("name") || "").trim(),
       description: String(formData.get("description") || "").trim(),
@@ -58,85 +64,30 @@ export async function POST(req: Request) {
     };
 
     const validatedInput = createListingSchema.safeParse(rawInput);
-
     if (!validatedInput.success) {
-      return NextResponse.json(
-        {
-          message: "Input does not meet required schema",
-          errors: validatedInput.error.flatten().fieldErrors,
-        },
-        { status: 400 }
-      );
+      return NextResponse.json({
+        message: "Validation Error",
+        errors: validatedInput.error.flatten().fieldErrors,
+      }, { status: 400 });
     }
 
-    const {
-      name,
-      description,
-      location,
-      state,
-      status,
-      condition,
-      price,
-      negotiable,
-      offersDelivery,
-      contact,
-      categoryId,
-    } = validatedInput.data;
-
-    const user = await prisma.user.findUnique({
-      where: { id: userId },
-      select: { id: true, role: true },
-    });
-
-    if (!user) {
-      return NextResponse.json(
-        { message: "User does not exist" },
-        { status: 404 }
-      );
-    }
-
-    if (user.role !== "SELLER") {
-      return NextResponse.json(
-        { message: "User is not authorized" },
-        { status: 403 }
-      );
-    }
-
-    if (categoryId) {
+    // 4. Category Integrity Check
+    if (validatedInput.data.categoryId) {
       const categoryExists = await prisma.category.findUnique({
-        where: { id: categoryId },
-        select: { id: true },
+        where: { id: validatedInput.data.categoryId },
       });
-
-      if (!categoryExists) {
-        return NextResponse.json(
-          { message: "Selected category does not exist" },
-          { status: 400 }
-        );
-      }
+      if (!categoryExists) return NextResponse.json({ message: "Invalid Category" }, { status: 400 });
     }
 
-    const images = formData
-      .getAll("images")
-      .filter((file): file is File => file instanceof File && file.size > 0);
+    // 5. Asset Handling (Cloudinary)
+    const images = formData.getAll("images").filter((file): file is File => file instanceof File && file.size > 0);
+    uploaded = images.length ? await uploadManyImageFiles(images, { subfolder: "listings" }) : [];
 
-    uploaded = images.length
-      ? await uploadManyImageFiles(images, { subfolder: "listings" })
-      : [];
-
+    // 6. Data Persistence (Principle: Single Source of Truth)
     const listing = await prisma.listing.create({
       data: {
-        name,
-        description,
-        location,
-        state,
-        status,
-        condition,
-        price,
-        negotiable,
-        offersDelivery,
-        contact,
-        categoryId,
+        ...validatedInput.data,
+        slug: createSlug(validatedInput.data.name), // CRITICAL: Generate unique slug here
         sellerId: user.id,
         images: {
           create: uploaded.map((img) => ({
@@ -147,30 +98,19 @@ export async function POST(req: Request) {
       },
       include: {
         images: true,
-        category: {
-          select: {
-            id: true,
-            name: true,
-            image: true,
-          },
-        },
-        seller: {
-          select: {
-            id: true,
-            firstname: true,
-            lastname: true,
-          },
-        },
+        category: { select: { id: true, name: true, image: true } },
+        seller: { select: { id: true, firstname: true, lastname: true } },
       },
     });
 
+    return NextResponse.json({ message: "Listing created successfully", listing }, { status: 201 });
 
-    return NextResponse.json(
-      { message: "Listing created successfully", listing },
-      { status: 201 }
-    );
   } catch (err) {
     console.error("Error creating listing:", err);
+    // Cleanup images if DB write fails (Principle: Data Consistency)
+    if (uploaded.length) {
+      await deleteManyByPublicIds(uploaded.map(img => img.public_id));
+    }
     return NextResponse.json({ message: "Server error" }, { status: 500 });
   }
 }
