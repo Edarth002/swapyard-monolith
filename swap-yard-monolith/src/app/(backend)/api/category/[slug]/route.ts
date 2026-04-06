@@ -7,7 +7,7 @@ import {
   deleteImageByPublicId,
 } from "@/app/(backend)/utils/cloudinary";
 import { updateCategorySchema } from "../schema";
-import { createSlug } from "@/lib/slugGenerator";
+import { createCategorySlug } from "@/lib/slugGenerator";
 
 export const runtime = "nodejs";
 
@@ -117,7 +117,7 @@ export async function PATCH(
     if (name !== undefined && name !== existing.name) {
       data.name = name;
 
-      const baseSlug = createSlug(name);
+      const baseSlug = createCategorySlug(name);
       let newSlug = baseSlug;
 
       let existingSlug = await prisma.category.findUnique({

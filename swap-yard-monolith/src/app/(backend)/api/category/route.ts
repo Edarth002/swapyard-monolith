@@ -3,7 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { verifyToken } from "@/lib/token";
 import { uploadOneImageFile } from "@/app/(backend)/utils/cloudinary";
 import { createCategorySchema } from "./schema";
-import { createSlug } from "@/lib/slugGenerator";
+import { createCategorySlug } from "@/lib/slugGenerator";
 
 export const runtime = "nodejs";
 
@@ -68,7 +68,7 @@ export async function POST(req: Request) {
 
     const { name } = parsed.data;
 
-    let slug = createSlug(name);
+    let slug = createCategorySlug(name);
 
     let existing = await prisma.category.findUnique({
       where: { slug },
@@ -76,7 +76,7 @@ export async function POST(req: Request) {
 
     let counter = 1;
     while (existing) {
-      slug = `${createSlug(name)}-${counter}`;
+      slug = `${createCategorySlug(name)}-${counter}`;
       existing = await prisma.category.findUnique({
         where: { slug },
       });
