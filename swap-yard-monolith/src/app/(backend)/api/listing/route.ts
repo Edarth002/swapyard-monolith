@@ -29,7 +29,6 @@ export async function POST(req: Request) {
   let uploaded: Array<{ url: string; public_id: string }> = [];
 
   try {
-    // 1. Authentication Layer
     const token = await getCookie(req, "session");
     if (!token) return NextResponse.json({ message: "Unauthorized" }, { status: 401 });
 
@@ -42,12 +41,10 @@ export async function POST(req: Request) {
       select: { id: true, role: true },
     });
 
-    // 2. Authorization Layer (Principle: RBAC)
     if (!user || user.role !== "SELLER") {
       return NextResponse.json({ message: "Forbidden: Sellers only" }, { status: 403 });
     }
 
-    // 3. Validation Layer
     const formData = await req.formData();
     const rawInput = {
       name: String(formData.get("name") || "").trim(),
@@ -71,7 +68,6 @@ export async function POST(req: Request) {
       }, { status: 400 });
     }
 
-    // 4. Category Integrity Check
     if (validatedInput.data.categoryId) {
       const categoryExists = await prisma.category.findUnique({
         where: { id: validatedInput.data.categoryId },
@@ -79,15 +75,13 @@ export async function POST(req: Request) {
       if (!categoryExists) return NextResponse.json({ message: "Invalid Category" }, { status: 400 });
     }
 
-    // 5. Asset Handling (Cloudinary)
     const images = formData.getAll("images").filter((file): file is File => file instanceof File && file.size > 0);
     uploaded = images.length ? await uploadManyImageFiles(images, { subfolder: "listings" }) : [];
 
-    // 6. Data Persistence (Principle: Single Source of Truth)
     const listing = await prisma.listing.create({
       data: {
         ...validatedInput.data,
-        slug: createSlug(validatedInput.data.name), // CRITICAL: Generate unique slug here
+        slug: createSlug(validatedInput.data.name),
         sellerId: user.id,
         images: {
           create: uploaded.map((img) => ({
@@ -107,7 +101,8 @@ export async function POST(req: Request) {
 
   } catch (err) {
     console.error("Error creating listing:", err);
-    // Cleanup images if DB write fails (Principle: Data Consistency)
+
+    //rollback newly uploaded images on cloudinary if something goes wrong during upload (Principle: Atomicity)
     if (uploaded.length) {
       await deleteManyByPublicIds(uploaded.map(img => img.public_id));
     }
@@ -160,21 +155,6 @@ export async function GET(req: Request) {
       page,
       limit,
     } = validatedQuery.data;
-
-    const cacheKey = `listings:${JSON.stringify({
-      q,
-      status,
-      condition,
-      state,
-      sellerId,
-      categoryId,
-      minPrice,
-      maxPrice,
-      offersDelivery,
-      negotiable,
-      page,
-      limit,
-    })}`;
 
 
     const skip = (page - 1) * limit;
