@@ -10,13 +10,15 @@ export async function GET(
   const targetSlug = slug[slug.length - 1];
 
   try {
-    const category = await prisma.category.findUnique({
-      where: { slug: targetSlug },
+    const category = await prisma.category.findMany({
       include: {
         listings: {
-          include: { images: true }
-        }
-      }
+          include: {
+            images: true,
+          },
+        },
+      },
+      orderBy: { createdAt: "desc" },
     });
 
     if (category) {

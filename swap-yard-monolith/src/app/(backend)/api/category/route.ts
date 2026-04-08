@@ -110,23 +110,3 @@ export async function POST(req: Request) {
     return NextResponse.json({ message: "Server error" }, { status: 500 });
   }
 }
-
-export async function GET() {
-  try {
-    const categories = await prisma.category.findMany({
-      include: {
-        listings: {
-          include: {
-            images: true,
-          },
-        },
-      },
-      orderBy: { createdAt: "desc" },
-    });
-
-    return NextResponse.json({ categories }, { status: 200 });
-  } catch (err) {
-    console.error(err);
-    return NextResponse.json({ message: "Server error" }, { status: 500 });
-  }
-}
