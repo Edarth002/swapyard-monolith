@@ -1,3 +1,4 @@
+import { fetchListings } from "@/lib/getListingLogic";
 import { prisma } from "@/lib/prisma";
 import { NextResponse } from "next/server";
 
@@ -9,24 +10,17 @@ export async function GET(
 
   const targetSlug = slug[slug.length - 1];
 
-  try {
-    const category = await prisma.category.findMany({
-      include: {
-        listings: {
-          include: {
-            images: true,
-          },
-        },
-      },
-      orderBy: { createdAt: "desc" },
-    });
+  const { searchParams } = new URL(req.url);
 
+  try {
+    const category = await prisma.category.findUnique({ where: { slug: targetSlug } });
+  
+  
     if (category) {
-      return NextResponse.json({ 
-        type: "CATEGORY", 
-        data: category 
-      });
+    const result = await fetchListings(searchParams, { categoryId: category.id });
+    return NextResponse.json({ type: "CATEGORY", data: category, items: result.items, meta: result.total }, { status: 200 });
     }
+  
 
     const listing = await prisma.listing.findUnique({
       where: { slug: targetSlug },
@@ -43,7 +37,7 @@ export async function GET(
       return NextResponse.json({ 
         type: "LISTING", 
         data: listing 
-      });
+      }, { status: 200 });
     }
 
     return NextResponse.json({ message: "Resource not found" }, { status: 404 });

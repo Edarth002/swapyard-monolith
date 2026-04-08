@@ -124,8 +124,10 @@ export async function GET(req: Request) {
         total: result.total,
         page: result.page,
         pages: Math.ceil(result.total / result.limit),
-      }
-    });
+      },
+      orderBy: { createdAt: "desc" }
+    })
+    ;
   } catch (err: any) {
     if (err.message === "INVALID_PARAMS") return NextResponse.json({ message: "Bad Request" }, { status: 400 });
     return NextResponse.json({ message: "Server Error" }, { status: 500 });
