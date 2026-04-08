@@ -5,6 +5,7 @@ import { prisma } from "@/lib/prisma";
 import { verifyToken } from "@/lib/token";
 import { createListingSchema, getListingsSchema } from "./schema";
 import { createSlug } from "@/lib/slugGenerator";
+import { fetchListings } from "@/lib/getListingLogic";
 
 export const runtime = "nodejs";
 
@@ -110,130 +111,23 @@ export async function POST(req: Request) {
   }
 }
 
+
 export async function GET(req: Request) {
   try {
     const { searchParams } = new URL(req.url);
-
-    const rawQuery = {
-      q: searchParams.get("q") ?? undefined,
-      status: searchParams.get("status") ?? undefined,
-      condition: searchParams.get("condition") ?? undefined,
-      state: searchParams.get("state") ?? undefined,
-      sellerId: searchParams.get("sellerId") ?? undefined,
-      categoryId: searchParams.get("categoryId") ?? undefined,
-      minPrice: searchParams.get("minPrice") ?? undefined,
-      maxPrice: searchParams.get("maxPrice") ?? undefined,
-      offersDelivery: searchParams.get("offersDelivery") ?? undefined,
-      negotiable: searchParams.get("negotiable") ?? undefined,
-      page: searchParams.get("page") ?? undefined,
-      limit: searchParams.get("limit") ?? undefined,
-    };
-
-    const validatedQuery = getListingsSchema.safeParse(rawQuery);
-
-    if (!validatedQuery.success) {
-      return NextResponse.json(
-        {
-          message: "Invalid query parameters",
-          errors: validatedQuery.error.flatten().fieldErrors,
-        },
-        { status: 400 }
-      );
-    }
-
-    const {
-      q,
-      status,
-      condition,
-      state,
-      sellerId,
-      categoryId,
-      minPrice,
-      maxPrice,
-      offersDelivery,
-      negotiable,
-      page,
-      limit,
-    } = validatedQuery.data;
-
-
-    const skip = (page - 1) * limit;
-
-    const where: Prisma.ListingWhereInput = {
-      ...(status ? { status } : {}),
-      ...(condition ? { condition } : {}),
-      ...(state ? { state } : {}),
-      ...(sellerId ? { sellerId } : {}),
-      ...(categoryId ? { categoryId } : {}),
-      ...(offersDelivery !== undefined ? { offersDelivery } : {}),
-      ...(negotiable !== undefined ? { negotiable } : {}),
-      ...(minPrice !== undefined || maxPrice !== undefined
-        ? {
-            price: {
-              ...(minPrice !== undefined ? { gte: minPrice } : {}),
-              ...(maxPrice !== undefined ? { lte: maxPrice } : {}),
-            },
-          }
-        : {}),
-    };
-
-    if (q) {
-      where.OR = [
-        { name: { contains: q } },
-        { description: { contains: q } },
-        { location: { contains: q} },
-        { state: { contains: q } },
-        { contact: { contains: q } },
-        {
-          category: {
-            name: { contains: q },
-          },
-        },
-      ];
-    }
-
-    const [items, total] = await Promise.all([
-      prisma.listing.findMany({
-        where,
-        include: {
-          images: true,
-          category: {
-            select: {
-              id: true,
-              name: true,
-              image: true,
-            },
-          },
-          seller: {
-            select: {
-              id: true,
-              firstname: true,
-              lastname: true,
-              image: true,
-            },
-          },
-        },
-        orderBy: { createdAt: "desc" },
-        skip,
-        take: limit,
-      }),
-      prisma.listing.count({ where }),
-    ]);
-
-    const responseData = {
+    const result = await fetchListings(searchParams);
+    
+    return NextResponse.json({
       ok: true,
-      items,
+      items: result.items,
       meta: {
-        total,
-        page,
-        limit,
-        pages: Math.ceil(total / limit),
-      },
-    };
-
-    return NextResponse.json(responseData, { status: 200 });
-  } catch (err) {
-    console.error("Error fetching listings:", err);
-    return NextResponse.json({ message: "Server error" }, { status: 500 });
+        total: result.total,
+        page: result.page,
+        pages: Math.ceil(result.total / result.limit),
+      }
+    });
+  } catch (err: any) {
+    if (err.message === "INVALID_PARAMS") return NextResponse.json({ message: "Bad Request" }, { status: 400 });
+    return NextResponse.json({ message: "Server Error" }, { status: 500 });
   }
 }
