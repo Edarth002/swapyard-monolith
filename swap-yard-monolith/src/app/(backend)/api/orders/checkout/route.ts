@@ -80,18 +80,13 @@ export async function POST(req: Request) {
       );
     }
 
-
     let subtotal = 0;
-
     const orderItemsData = cart.items.map((item) => {
       const listing = item.listing;
       if (listing.status !== "AVAILABLE") {
-        throw new Error("Some items are no longer available");
+        throw new Error(`Item ${listing.name} is no longer available`);
       }
-
-      const total = listing.price * item.quantity;
-      subtotal += total;
-
+      subtotal += listing.price * item.quantity;
       return {
         listingId: listing.id,
         sellerId: listing.sellerId,
@@ -102,45 +97,46 @@ export async function POST(req: Request) {
     });
 
     const deliveryFee = 0;
-    const platformCommission = subtotal * 1.5;
+    const platformCommission = subtotal * 0.015; 
     const totalAmount = subtotal + deliveryFee;
 
-    const order = await prisma.order.create({
-      data: {
-        buyerId: user.id,
-        pickupLocation,
-        pickupNote,
-
-        subtotal,
-        deliveryFee,
-        platformCommission,
-        totalAmount,
-
-        items: {
-          create: orderItemsData,
-        },
-
-        payment: {
-          create: {
-            buyerId: user.id,
-            amount: totalAmount,
-            status: "PENDING",
-            provider: "PAYSTACK",
+    const order = await prisma.$transaction(async (tx) => {
+      const newOrder = await tx.order.create({
+        data: {
+          buyerId: user.id,
+          pickupLocation,
+          pickupNote,
+          subtotal,
+          deliveryFee,
+          platformCommission,
+          totalAmount,
+          items: {
+            create: orderItemsData,
+          },
+          payment: {
+            create: {
+              buyerId: user.id,
+              amount: totalAmount,
+              status: "PENDING",
+              provider: "PAYSTACK",
+            },
           },
         },
-      },
-      include: {
-        payment: true,
-      },
+        include: {
+          payment: true,
+        },
+      });
+
+      await tx.cartItem.deleteMany({
+        where: { cartId: cart.id },
+      });
+
+      return newOrder;
     });
 
-    await prisma.cartItem.deleteMany({
-      where: { cartId: cart.id },
-    });
-
-    // ✅ PAYSTACK INIT: Pending final stage of application
+    // Initialize payment with Paystack not implemented in transaction to avoid long-running transactions and potential timeouts and also because it involves external API calls which should be handled separately from database operations. Also, developer paystack acct is nonexistent
     const paystackRes = await fetch(
-      "https://api.paystack.co/transaction/initialize",
+      "https://api.api.paystack.co/transaction/initialize",
       {
         method: "POST",
         headers: {
@@ -179,8 +175,11 @@ export async function POST(req: Request) {
       },
       { status: 200 }
     );
-  } catch (error) {
+  } catch (error: any) {
     console.error("CHECKOUT ERROR:", error);
-    return NextResponse.json({ message: "Server error" }, { status: 500 });
+    return NextResponse.json(
+      { message: error.message || "Server error" },
+      { status: 500 }
+    );
   }
 }
