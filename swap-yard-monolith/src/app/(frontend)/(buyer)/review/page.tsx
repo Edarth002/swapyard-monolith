@@ -1,14 +1,36 @@
 "use client";
 
+import { useState, useEffect } from "react";
 import { useCart } from "@/app/context/CartContext";
+import { useNotification } from "@/app/context/NotificationContext";
 import Link from "next/link";
-import { Check, Lock, RotateCcw, Star, ArrowLeft, MapPin, CreditCard } from "lucide-react";
+import { useRouter } from "next/navigation"; 
+import { Lock, ArrowLeft, MapPin, CreditCard, Loader2 } from "lucide-react";
 import ValuePropsSection from "@/components/buyer/listings/ValuePropsSection";
 
 export default function ReviewOrderPage() {
-    const { cartItems, cartTotal, cartCount } = useCart();
+    const router = useRouter();
+    const { cartItems, cartTotal, cartCount, clearCart } = useCart();
+    const { addNotification } = useNotification();
+    
+    const [isMounted, setIsMounted] = useState(false);
+    const [checkoutData, setCheckoutData] = useState<any>(null);
+    const [paymentData, setPaymentData] = useState<any>(null);
+    const [isSubmitting, setIsSubmitting] = useState(false);
 
-    // Format price to Naira
+    useEffect(() => {
+        setIsMounted(true);
+        try {
+            const storedCheckout = sessionStorage.getItem("swapyard_checkout");
+            const storedPayment = sessionStorage.getItem("swapyard_payment");
+
+            if (storedCheckout) setCheckoutData(JSON.parse(storedCheckout));
+            if (storedPayment) setPaymentData(JSON.parse(storedPayment));
+        } catch (error) {
+            console.error("Failed to parse checkout data:", error);
+        }
+    }, []);
+
     const formatPrice = (price: number) => {
         return new Intl.NumberFormat("en-NG", {
             style: "currency",
@@ -17,33 +39,90 @@ export default function ReviewOrderPage() {
         }).format(price);
     };
 
-    // Dummy values representing data that would usually come from a form state or context
-    const shippingMethod = { name: "Door-step delivery", price: 5000 };
+    // --- TEST MODE Backend Integration ---
+    const handleCompletePurchase = async (e: React.MouseEvent) => {
+        e.preventDefault();
+        if (isSubmitting) return;
+
+        setIsSubmitting(true);
+
+        try {
+            // 1. Create the order in the database
+            const response = await fetch("/api/orders/checkout", {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                },
+                body: JSON.stringify({
+                    pickupLocation: `${checkoutData?.street || 'N/A'}, ${checkoutData?.city || ''}`,
+                    pickupNote: `Test Order - No Payment. Phone: ${checkoutData?.phone || 'N/A'}`
+                }),
+            });
+
+            const data = await response.json();
+
+            // NOTE: Even if payment initialization fails in the backend (Paystack Error), 
+            // the order record is still likely created in your DB. 
+            // We check for response.ok to ensure the Prisma logic finished.
+            if (!response.ok && data.message !== "Payment initialization failed") {
+                throw new Error(data.message || "Failed to create order");
+            }
+
+            // 2. Trigger Notification
+            addNotification({
+                title: "Order Placed!",
+                message: `Order for ${cartCount} items totaling ${formatPrice(finalTotal)} has been recorded.`,
+                type: "order"
+            });
+
+            // 3. Cleanup State
+            clearCart();
+            sessionStorage.removeItem("swapyard_checkout");
+            sessionStorage.removeItem("swapyard_payment");
+
+            // 4. Skip Paystack and go straight to success
+            router.push("/order-success");
+
+        } catch (error: any) {
+            console.error("Purchase Error:", error);
+            alert(error.message || "An error occurred. Check if items are in your DB cart.");
+        } finally {
+            setIsSubmitting(false);
+        }
+    };
+
+    if (!isMounted) {
+        return (
+            <div className="min-h-screen flex items-center justify-center bg-white">
+                <Loader2 className="w-8 h-8 text-[#EB3B18] animate-spin" />
+            </div>
+        );
+    }
+
+    const shippingMethod = checkoutData?.deliveryMethod || { name: "Standard Delivery", price: 0 };
     const finalTotal = cartTotal + shippingMethod.price;
+    
+    const paymentMethodName = paymentData?.method === "card" ? "VISA" : paymentData?.method || "Paystack";
+    const paymentLast4 = paymentData?.cardNumber ? paymentData.cardNumber.slice(-4) : "****";
 
     return (
         <div className="min-h-screen bg-white font-sans text-gray-800 pb-16 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
             <Link 
                 href="/payment" 
-                aria-label="Go back to payment method"
                 className="text-[10px] font-bold text-gray-500 uppercase tracking-widest hover:text-gray-900 transition-colors cursor-pointer flex items-center px-6 pt-8 pb-10 max-w-6xl mx-auto"
             >
                 <ArrowLeft className="w-3.5 h-3.5 mr-2" />
                 BACK TO PAYMENT
             </Link>
 
-            {/* MAIN CONTENT */}
             <div className="max-w-6xl mx-auto mt-4 px-6 flex flex-col lg:flex-row justify-between gap-12 lg:gap-16">
-                
-                {/* LEFT COLUMN: Summary Review */}
                 <div className="w-full lg:w-[58%] flex flex-col">
                     <div className="mb-10">
                         <h1 className="text-3xl font-semibold text-gray-900 tracking-tight mb-3">Review your order</h1>
-                        <p className="text-xs text-gray-500 text-visible">Please check your details before completing the purchase.</p>
+                        <p className="text-xs text-gray-500">Please check your details before completing the purchase.</p>
                     </div>
 
                     <div className="flex flex-col gap-8">
-                        {/* Shipping Summary */}
                         <div className="border border-gray-200 rounded-md p-6 relative">
                             <div className="flex justify-between items-start mb-4">
                                 <h2 className="text-sm font-bold text-gray-900 uppercase tracking-wider flex items-center gap-2">
@@ -52,14 +131,20 @@ export default function ReviewOrderPage() {
                                 <Link href="/checkout" className="text-[10px] font-bold text-[#EB3B18] hover:underline cursor-pointer">EDIT</Link>
                             </div>
                             <div className="text-sm text-gray-600 leading-relaxed">
-                                <p className="font-bold text-gray-800">James Garett</p>
-                                <p>123 SwapYard Street, Lekki Phase 1</p>
-                                <p>Lagos, Nigeria</p>
-                                <p>+234 812 345 6789</p>
+                                {checkoutData ? (
+                                    <>
+                                        <p className="font-bold text-gray-800">{checkoutData.firstName} {checkoutData.lastName}</p>
+                                        <p>{checkoutData.street}</p>
+                                        <p>{checkoutData.city}, {checkoutData.state}</p>
+                                        <p>{checkoutData.country} {checkoutData.zipCode}</p>
+                                        <p>{checkoutData.phone}</p>
+                                    </>
+                                ) : (
+                                    <p className="text-red-500 font-semibold text-xs">Missing checkout details.</p>
+                                )}
                             </div>
                         </div>
 
-                        {/* Payment Summary */}
                         <div className="border border-gray-200 rounded-md p-6 relative">
                             <div className="flex justify-between items-start mb-4">
                                 <h2 className="text-sm font-bold text-gray-900 uppercase tracking-wider flex items-center gap-2">
@@ -69,15 +154,18 @@ export default function ReviewOrderPage() {
                             </div>
                             <div className="flex items-center gap-4">
                                 <div className="w-10 h-6 bg-gray-100 rounded border border-gray-200 flex items-center justify-center">
-                                    <span className="text-[8px] font-black italic text-blue-800">VISA</span>
+                                    <span className="text-[8px] font-black italic text-blue-800">{paymentMethodName}</span>
                                 </div>
                                 <div className="text-sm text-gray-600">
-                                    Visa ending in <span className="font-bold text-gray-800">4242</span>
+                                    {paymentData?.method === "card" ? (
+                                        <>Card ending in <span className="font-bold text-gray-800">{paymentLast4}</span></>
+                                    ) : (
+                                        <span className="font-bold text-gray-800">Test Processor</span>
+                                    )}
                                 </div>
                             </div>
                         </div>
 
-                        {/* Delivery Option Summary */}
                         <div className="border border-gray-200 rounded-md p-6">
                             <div className="flex justify-between items-start mb-2">
                                 <h2 className="text-sm font-bold text-gray-900 uppercase tracking-wider">Delivery Method</h2>
@@ -87,7 +175,6 @@ export default function ReviewOrderPage() {
                         </div>
                     </div>
 
-                    {/* Final Action Buttons */}
                     <div className="flex justify-between items-center pt-10 border-t border-gray-100 mt-10">
                         <Link 
                             href="/payment"
@@ -95,27 +182,24 @@ export default function ReviewOrderPage() {
                         >
                             <span className="text-sm leading-none">&lsaquo;</span> BACK
                         </Link>
-                        <Link 
-                            href="/order-success" // <-- Point this to your new success page
-                            aria-label={`Complete purchase for ${formatPrice(finalTotal)}`}
-                            className="px-8 py-3 text-[11px] font-extrabold text-white uppercase tracking-widest bg-[#EB3B18] rounded-sm hover:bg-[#d93616] transition-all transform hover:scale-[1.02] shadow-lg flex items-center gap-2 cursor-pointer"
+                        
+                        <button 
+                            onClick={handleCompletePurchase}
+                            disabled={isSubmitting || cartItems.length === 0}
+                            className="px-8 py-3 text-[11px] font-extrabold text-white uppercase tracking-widest bg-[#EB3B18] rounded-sm hover:bg-[#d93616] transition-all transform hover:scale-[1.02] shadow-lg flex items-center gap-2 cursor-pointer disabled:bg-gray-400"
                         >
-                            COMPLETE PURCHASE <span className="text-sm leading-none">&rsaquo;</span>
-                        </Link>
+                            {isSubmitting ? (
+                                <>PROCESSING <Loader2 size={14} className="animate-spin" /></>
+                            ) : (
+                                <>COMPLETE PURCHASE <span className="text-sm leading-none">&rsaquo;</span></>
+                            )}
+                        </button>
                     </div>
                 </div>
 
-                {/* RIGHT COLUMN: Sidebar (Summary) */}
                 <div className="w-full lg:w-[35%] max-w-[400px] flex flex-col">
                     <div className="bg-gray-50/50 border border-gray-100 rounded-md p-6 mb-8">
                         <h3 className="font-bold text-gray-900 text-sm mb-6">Order summary</h3>
-                        
-                        <div className="flex justify-between items-center text-[9px] font-bold text-gray-400 uppercase tracking-widest mb-4 pb-2 border-b border-gray-200">
-                            <span className="flex-1">PRODUCT</span>
-                            <span className="w-12 text-center">QTY</span>
-                            <span className="w-20 text-right">PRICE</span>
-                        </div>
-
                         <div className="flex flex-col gap-4 mb-6 pb-6 border-b border-gray-200">
                             {cartItems.map((item) => (
                                 <div key={item.id} className="flex justify-between items-start w-full">
@@ -125,41 +209,20 @@ export default function ReviewOrderPage() {
                                         </div>
                                         <div className="flex flex-col pt-0.5">
                                             <span className="text-sm font-bold text-gray-900 leading-tight mb-1 line-clamp-1">{item.title}</span>
-                                            <span className="text-xs text-gray-500 uppercase">Qty: {item.quantity}</span>
+                                            <span className="text-xs text-gray-500">Qty: {item.quantity}</span>
                                         </div>
                                     </div>
                                     <div className="w-20 text-right text-sm font-bold text-gray-900 pt-0.5">{formatPrice(item.price)}</div>
                                 </div>
                             ))}
                         </div>
-
-                        <div className="flex flex-col gap-2 mb-6 pb-6 border-b border-gray-200 text-visible">
-                            <div className="flex justify-between items-center">
-                                <span className="text-sm font-semibold text-gray-600">Subtotal</span>
-                                <span className="text-sm font-bold text-gray-900">{formatPrice(cartTotal)}</span>
-                            </div>
-                            <div className="flex justify-between items-center">
-                                <span className="text-sm font-semibold text-gray-600">Shipping</span>
-                                <span className="text-sm font-bold text-gray-900">{formatPrice(shippingMethod.price)}</span>
-                            </div>
-                        </div>
-
                         <div className="flex justify-between items-center pt-2">
                             <span className="font-bold text-gray-900">Total</span>
                             <span className="text-xl font-black text-[#EB3B18]">{formatPrice(finalTotal)}</span>
                         </div>
                     </div>
-
-                    {/* Final Security Notice */}
-                    <div className="px-2 flex items-start gap-3">
-                        <Lock size={14} className="text-gray-400 mt-1" />
-                        <p className="text-[10px] text-gray-500 leading-relaxed">
-                            Your transaction is secured with industry-standard encryption. By clicking "Complete Purchase", you agree to SwapYard's Terms of Service.
-                        </p>
-                    </div>
                 </div>
             </div>
-
             <ValuePropsSection />
         </div>
     );

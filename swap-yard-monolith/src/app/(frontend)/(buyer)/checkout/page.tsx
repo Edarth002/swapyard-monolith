@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useCart } from "@/app/context/CartContext";
 import Link from "next/link";
+import { useRouter } from "next/navigation"; 
 import { Check, Lock, RotateCcw, Star, ArrowLeft } from "lucide-react";
 import ValuePropsSection from "@/components/buyer/listings/ValuePropsSection";
 import { useCountriesAndStates } from "@/hooks/buyer/useCountriesAndStates";
@@ -14,8 +15,22 @@ const DELIVERY_METHODS = [
 ];
 
 export default function CheckoutPage() {
+    const router = useRouter(); 
     const { cartItems, cartTotal, cartCount } = useCart();
     const [selectedDelivery, setSelectedDelivery] = useState(DELIVERY_METHODS[0]); // Default to first option
+
+    // --- Form State ---
+    const [formData, setFormData] = useState({
+        firstName: "",
+        lastName: "",
+        street: "",
+        city: "",
+        zipCode: "",
+        phone: ""
+    });
+
+    // --- Validation Errors State ---
+    const [errors, setErrors] = useState<Record<string, string>>({});
 
     // --- Initialize the custom hook ---
     const {
@@ -38,6 +53,55 @@ export default function CheckoutPage() {
     };
 
     const finalTotal = cartTotal + selectedDelivery.price;
+
+    // --- Handle Input Changes ---
+    const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+        const { name, value } = e.target;
+        setFormData(prev => ({ ...prev, [name]: value }));
+        
+        // Clear error for this field when the user starts typing
+        if (errors[name]) {
+            setErrors(prev => ({ ...prev, [name]: "" }));
+        }
+    };
+
+    // --- Handle Validation & Next Step ---
+    const handleNextStep = (e: React.MouseEvent) => {
+        e.preventDefault();
+        const newErrors: Record<string, string> = {};
+
+        // Validate text fields
+        if (!formData.firstName.trim()) newErrors.firstName = "First name is required";
+        if (!formData.lastName.trim()) newErrors.lastName = "Second name is required";
+        if (!formData.street.trim()) newErrors.street = "Street address is required";
+        if (!formData.city.trim()) newErrors.city = "City is required";
+        if (!formData.zipCode.trim()) newErrors.zipCode = "Zip code is required";
+        if (!formData.phone.trim()) newErrors.phone = "Phone number is required";
+
+        // Validate dropdowns
+        if (!selectedCountry || selectedCountry === "Loading...") newErrors.country = "Country is required";
+        if (!selectedState || selectedState === "Loading..." || selectedState === "") newErrors.state = "State is required";
+
+        // If errors exist, update state and halt
+        if (Object.keys(newErrors).length > 0) {
+            setErrors(newErrors);
+            return;
+        }
+
+        // ===============================================
+        // NEW: Save data to sessionStorage before routing
+        // ===============================================
+        const checkoutData = {
+            ...formData,
+            country: selectedCountry,
+            state: selectedState,
+            deliveryMethod: selectedDelivery,
+        };
+        sessionStorage.setItem("swapyard_checkout", JSON.stringify(checkoutData));
+
+        // If no errors, proceed to payment
+        router.push("/payment");
+    };
 
     return (
         <div className="min-h-screen bg-white font-sans text-gray-800 pb-16 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
@@ -66,29 +130,69 @@ export default function CheckoutPage() {
                             <div className="flex flex-col sm:flex-row gap-5">
                                 <div className="flex-1 flex flex-col">
                                     <label className="text-[10px] font-bold text-gray-600 uppercase tracking-wide mb-2">FIRST NAME</label>
-                                    <input type="text" placeholder="James" defaultValue="" className="w-full px-4 py-3 bg-gray-50/50 border border-gray-200 focus:border-[#EB3B18] outline-none text-sm text-gray-800 transition-colors" />
+                                    <input 
+                                        type="text" 
+                                        name="firstName"
+                                        value={formData.firstName}
+                                        onChange={handleInputChange}
+                                        placeholder="James" 
+                                        className={`w-full px-4 py-3 bg-gray-50/50 border ${errors.firstName ? 'border-red-500' : 'border-gray-200 focus:border-[#EB3B18]'} outline-none text-sm text-gray-800 transition-colors`} 
+                                    />
+                                    {errors.firstName && <span className="text-red-500 text-[10px] mt-1 font-semibold">{errors.firstName}</span>}
                                 </div>
                                 <div className="flex-1 flex flex-col">
                                     <label className="text-[10px] font-bold text-gray-600 uppercase tracking-wide mb-2">SECOND NAME</label>
-                                    <input type="text" placeholder="Garett" defaultValue="" className="w-full px-4 py-3 bg-gray-50/50 border border-gray-200 focus:border-[#EB3B18] outline-none text-sm text-gray-800 transition-colors" />
+                                    <input 
+                                        type="text" 
+                                        name="lastName"
+                                        value={formData.lastName}
+                                        onChange={handleInputChange}
+                                        placeholder="Garett" 
+                                        className={`w-full px-4 py-3 bg-gray-50/50 border ${errors.lastName ? 'border-red-500' : 'border-gray-200 focus:border-[#EB3B18]'} outline-none text-sm text-gray-800 transition-colors`} 
+                                    />
+                                    {errors.lastName && <span className="text-red-500 text-[10px] mt-1 font-semibold">{errors.lastName}</span>}
                                 </div>
                             </div>
 
                             {/* Row 2: Street Address */}
                             <div className="flex flex-col">
                                 <label className="text-[10px] font-bold text-gray-600 uppercase tracking-wide mb-2">STREET ADDRESS</label>
-                                <input type="text" placeholder="Street and number" className="w-full px-4 py-3 bg-gray-50/50 border border-gray-200 focus:border-[#EB3B18] outline-none text-sm text-gray-800 transition-colors" />
+                                <input 
+                                    type="text" 
+                                    name="street"
+                                    value={formData.street}
+                                    onChange={handleInputChange}
+                                    placeholder="Street and number" 
+                                    className={`w-full px-4 py-3 bg-gray-50/50 border ${errors.street ? 'border-red-500' : 'border-gray-200 focus:border-[#EB3B18]'} outline-none text-sm text-gray-800 transition-colors`} 
+                                />
+                                {errors.street && <span className="text-red-500 text-[10px] mt-1 font-semibold">{errors.street}</span>}
                             </div>
 
                             {/* Row 3: City & Zip */}
                             <div className="flex flex-col sm:flex-row gap-5">
                                 <div className="flex-[2] flex flex-col">
                                     <label className="text-[10px] font-bold text-gray-600 uppercase tracking-wide mb-2">CITY</label>
-                                    <input type="text" placeholder="City" className="w-full px-4 py-3 bg-gray-50/50 border border-gray-200 focus:border-[#EB3B18] outline-none text-sm text-gray-800 transition-colors" />
+                                    <input 
+                                        type="text" 
+                                        name="city"
+                                        value={formData.city}
+                                        onChange={handleInputChange}
+                                        placeholder="City" 
+                                        className={`w-full px-4 py-3 bg-gray-50/50 border ${errors.city ? 'border-red-500' : 'border-gray-200 focus:border-[#EB3B18]'} outline-none text-sm text-gray-800 transition-colors`} 
+                                    />
+                                    {errors.city && <span className="text-red-500 text-[10px] mt-1 font-semibold">{errors.city}</span>}
                                 </div>
                                 <div className="flex-1 flex flex-col">
                                     <label className="text-[10px] font-bold text-gray-600 uppercase tracking-wide mb-2">ZIP CODE</label>
-                                    <input type="text" placeholder="00-000" className="w-full px-4 py-3 bg-gray-50/50 border border-gray-200 focus:border-[#EB3B18] outline-none text-sm text-gray-800 transition-colors" />
+                                    <input 
+                                        type="text" 
+                                        name="zipCode"
+                                        value={formData.zipCode}
+                                        onChange={handleInputChange}
+                                        placeholder="00-000" 
+                                        className={`w-full px-4 py-3 bg-gray-50/50 border ${errors.zipCode ? 'border-red-500' : 'border-gray-200 focus:border-[#EB3B18]'} outline-none text-sm text-gray-800 transition-colors`} 
+                                    />
+                                    {errors.zipCode && <span className="text-red-500 text-[10px] mt-1 font-semibold">{errors.zipCode}</span>}
                                 </div>
                             </div>
 
@@ -99,40 +203,46 @@ export default function CheckoutPage() {
                                     <select 
                                         id="country" 
                                         value={selectedCountry}
-                                        onChange={(e) => setSelectedCountry(e.target.value)}
+                                        onChange={(e) => {
+                                            setSelectedCountry(e.target.value);
+                                            if (errors.country) setErrors(prev => ({ ...prev, country: "" }));
+                                        }}
                                         disabled={loading}
-                                        className="w-full px-4 py-3 bg-gray-50/50 border border-gray-200 focus:border-[#EB3B18] outline-none text-sm text-gray-800 transition-colors appearance-none cursor-pointer disabled:opacity-50"
+                                        className={`w-full px-4 py-3 bg-gray-50/50 border ${errors.country ? 'border-red-500' : 'border-gray-200 focus:border-[#EB3B18]'} outline-none text-sm text-gray-800 transition-colors appearance-none cursor-pointer disabled:opacity-50`}
                                     >
                                         {loading ? (
                                             <option>Loading...</option>
                                         ) : (
-                                            /* CHANGED: Added index to key to prevent duplicate React key errors */
                                             countries.map((country, index) => (
                                                 <option key={`${country}-${index}`} value={country}>{country}</option>
                                             ))
                                         )}
                                     </select>
+                                    {errors.country && <span className="text-red-500 text-[10px] mt-1 font-semibold">{errors.country}</span>}
                                 </div>
                                 <div className="flex-1 flex flex-col">
                                     <label htmlFor="state" className="text-[10px] font-bold text-gray-600 uppercase tracking-wide mb-2">STATE / PROVINCE</label>
                                     <select 
                                         id="state" 
                                         value={selectedState}
-                                        onChange={(e) => setSelectedState(e.target.value)}
+                                        onChange={(e) => {
+                                            setSelectedState(e.target.value);
+                                            if (errors.state) setErrors(prev => ({ ...prev, state: "" }));
+                                        }}
                                         disabled={loading || states.length === 0}
-                                        className="w-full px-4 py-3 bg-gray-50/50 border border-gray-200 focus:border-[#EB3B18] outline-none text-sm text-gray-800 transition-colors appearance-none cursor-pointer disabled:opacity-50"
+                                        className={`w-full px-4 py-3 bg-gray-50/50 border ${errors.state ? 'border-red-500' : 'border-gray-200 focus:border-[#EB3B18]'} outline-none text-sm text-gray-800 transition-colors appearance-none cursor-pointer disabled:opacity-50`}
                                     >
                                         {loading ? (
                                             <option>Loading...</option>
                                         ) : states.length === 0 ? (
                                             <option value="">No states available</option>
                                         ) : (
-                                            /* CHANGED: Added index to key to prevent duplicate React key errors */
                                             states.map((state, index) => (
                                                 <option key={`${state}-${index}`} value={state}>{state}</option>
                                             ))
                                         )}
                                     </select>
+                                    {errors.state && <span className="text-red-500 text-[10px] mt-1 font-semibold">{errors.state}</span>}
                                 </div>
                             </div>
 
@@ -140,7 +250,16 @@ export default function CheckoutPage() {
                             <div className="flex flex-col sm:flex-row gap-5">
                                 <div className="flex-1 flex flex-col">
                                     <label htmlFor="Phone" className="text-[10px] font-bold text-gray-600 uppercase tracking-wide mb-2">PHONE NUMBER</label>
-                                    <input id="Phone" type="tel" defaultValue="123456789" className="w-full px-4 py-3 bg-gray-50/50 border border-gray-200 focus:border-[#EB3B18] outline-none text-sm text-gray-800 transition-colors" />
+                                    <input 
+                                        id="Phone" 
+                                        type="tel" 
+                                        name="phone"
+                                        value={formData.phone}
+                                        onChange={handleInputChange}
+                                        placeholder="+234 800 000 0000" 
+                                        className={`w-full px-4 py-3 bg-gray-50/50 border ${errors.phone ? 'border-red-500' : 'border-gray-200 focus:border-[#EB3B18]'} outline-none text-sm text-gray-800 transition-colors`} 
+                                    />
+                                    {errors.phone && <span className="text-red-500 text-[10px] mt-1 font-semibold">{errors.phone}</span>}
                                 </div>
                                 <div className="flex-1 hidden sm:block"></div> {/* Empty space for alignment */}
                             </div>
@@ -195,19 +314,21 @@ export default function CheckoutPage() {
 
                     {/* Form Action Buttons */}
                     <div className="flex justify-between items-center pt-8 border-t border-gray-100">
-                        <button 
+                        <Link 
+                            href="/cart"
                             aria-label="Go back to previous step"
                             className="px-6 py-2.5 text-[10px] font-bold text-white uppercase tracking-widest bg-[#EB3B18] rounded-sm hover:bg-[#d93616] transition-colors flex items-center gap-2 cursor-pointer"
                         >
                             <span className="text-sm leading-none">&lsaquo;</span> BACK
-                        </button>
-                        <Link 
-                            href="/payment"
+                        </Link>
+                        {/* Changed from Link to button to handle validation before routing */}
+                        <button 
+                            onClick={handleNextStep}
                             aria-label="Proceed to next step"
                             className="px-6 py-2.5 text-[10px] font-bold text-white uppercase tracking-widest bg-[#EB3B18] rounded-sm hover:bg-[#d93616] transition-colors flex items-center gap-2 cursor-pointer"
                         >
                             NEXT STEP <span className="text-sm leading-none">&rsaquo;</span>
-                        </Link>
+                        </button>
                     </div>
                 </div>
 

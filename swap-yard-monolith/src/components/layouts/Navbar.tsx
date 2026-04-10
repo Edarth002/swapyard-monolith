@@ -2,10 +2,11 @@
 
 import { useState, useEffect, useRef } from "react";
 import { usePathname } from "next/navigation";
-import { Menu, ShoppingCart, Bell, User, X, Trash2, Minus, Plus, Package, Mail, Heart, Ticket } from "lucide-react"; 
+import { Menu, ShoppingCart, Bell, User, X, Trash2, Minus, Plus, Package, Mail, Heart, Ticket, Info, AlertCircle } from "lucide-react"; 
 import Link from "next/link";
 import Logo from "@/components/ui/Logo";
-import { useCart } from "@/app/context/CartContext"; // <-- Imported Global Cart State
+import { useCart } from "@/app/context/CartContext"; 
+import { useNotification } from "@/app/context/NotificationContext"; 
 
 interface NavbarProps {
     onOpenSidebar: () => void;
@@ -35,8 +36,9 @@ export const Navbar = ({ onOpenSidebar }: NavbarProps) => {
     const [user, setUser] = useState<UserData | null>(null);
     const [authChecked, setAuthChecked] = useState(false);
 
-    // --- Access Global Cart State ---
+    // --- Access Global States ---
     const { cartItems, cartCount, cartTotal, removeFromCart, updateQuantity } = useCart();
+    const { notifications, unreadCount, markAsRead, markAllAsRead } = useNotification();
 
     // --- Authentication Check ---
     useEffect(() => {
@@ -69,15 +71,12 @@ export const Navbar = ({ onOpenSidebar }: NavbarProps) => {
     // --- Click Outside to Close Dropdowns ---
     useEffect(() => {
         const handleClickOutside = (event: MouseEvent) => {
-            // Close Cart if clicked outside
             if (cartRef.current && !cartRef.current.contains(event.target as Node)) {
                 setIsCartOpen(false);
             }
-            // Close Avatar Menu if clicked outside
             if (avatarRef.current && !avatarRef.current.contains(event.target as Node)) {
                 setIsAvatarOpen(false);
             }
-            // Close Notification Menu if clicked outside
             if (notificationRef.current && !notificationRef.current.contains(event.target as Node)) {
                 setIsNotificationOpen(false);
             }
@@ -92,7 +91,6 @@ export const Navbar = ({ onOpenSidebar }: NavbarProps) => {
         };
     }, [isCartOpen, isAvatarOpen, isNotificationOpen]);
 
-    // Determines if we should show the transparent landing page style or the white app style
     const isTransparent = isLandingPage && !isScrolled;
     
     const navThemeClass = isTransparent
@@ -101,7 +99,6 @@ export const Navbar = ({ onOpenSidebar }: NavbarProps) => {
 
     const isAuth = user !== null;
 
-    // --- LOGIC TO HIDE NAVBAR ON SPECIFIC PAGES ---
     const hiddenRoutes = ["/auth/login", "/auth/signup", "/auth/verify", "/seller/verify"];
     const shouldHideNavbar = hiddenRoutes.some(route => pathname?.startsWith(route));
 
@@ -110,6 +107,14 @@ export const Navbar = ({ onOpenSidebar }: NavbarProps) => {
     }
 
     const navPositionClass = isLandingPage ? "fixed" : "sticky";
+
+    const getNotificationIcon = (type: string) => {
+        switch (type) {
+            case "order": return <Package className="w-4 h-4 text-[#EB3B18]" />;
+            case "alert": return <AlertCircle className="w-4 h-4 text-red-500" />;
+            default: return <Info className="w-4 h-4 text-blue-500" />;
+        }
+    };
 
     return (
         <nav
@@ -165,7 +170,6 @@ export const Navbar = ({ onOpenSidebar }: NavbarProps) => {
                             {isCartOpen && (
                                 <div className={`absolute right-0 sm:-right-10 md:right-0 top-full mt-4 z-50 animate-in fade-in zoom-in-95 duration-200`}>
                                     <div className={`${cartItems.length === 0 ? "w-64" : "w-[340px] md:w-[400px]"} bg-white rounded-2xl shadow-xl border border-gray-100 flex flex-col overflow-hidden text-left`}>
-                                        {/* Header */}
                                         <div className="flex justify-between items-center p-4 border-b border-gray-100">
                                             <h3 className="font-extrabold text-gray-900 text-lg">Shopping Cart</h3>
                                             <button 
@@ -177,7 +181,6 @@ export const Navbar = ({ onOpenSidebar }: NavbarProps) => {
                                             </button>
                                         </div>
                                         
-                                        {/* Item List */}
                                         <div className="p-4 flex flex-col gap-3 max-h-[50vh] overflow-y-auto">
                                             {cartItems.length === 0 ? (
                                                 <p className="text-sm text-gray-500 text-center py-4">Your cart is empty.</p>
@@ -185,7 +188,6 @@ export const Navbar = ({ onOpenSidebar }: NavbarProps) => {
                                                 cartItems.map((item) => (
                                                     <div key={item.id} className="flex items-center gap-3 p-3 border border-gray-200 rounded-xl bg-white">
                                                         <div className="relative w-16 h-16 rounded-lg overflow-hidden shrink-0 bg-gray-100">
-                                                            {/* eslint-disable-next-line @next/next/no-img-element */}
                                                             <img src={item.imageUrl} alt={item.title} className="w-full h-full object-cover absolute inset-0" />
                                                         </div>
                                                         <div className="flex flex-col flex-1 min-w-0 justify-center">
@@ -203,7 +205,7 @@ export const Navbar = ({ onOpenSidebar }: NavbarProps) => {
                                                                 >
                                                                     <Minus className="w-3.5 h-3.5" />
                                                                 </button>
-                                                                <span className="text-sm font-bold w-3 text-center" aria-live="polite">
+                                                                <span className="text-sm font-bold w-3 text-center">
                                                                     {item.quantity}
                                                                 </span>
                                                                 <button 
@@ -227,7 +229,6 @@ export const Navbar = ({ onOpenSidebar }: NavbarProps) => {
                                             )}
                                         </div>
 
-                                        {/* Footer / Total Area (Only renders if cart has items) */}
                                         {cartItems.length > 0 && (
                                             <div className="p-4 border-t border-gray-100 bg-white">
                                                 <div className="flex justify-between items-center mb-4 px-1">
@@ -262,64 +263,56 @@ export const Navbar = ({ onOpenSidebar }: NavbarProps) => {
                                 className="hover:text-[#EB3B18] text-gray-500 transition-colors relative flex items-center cursor-pointer"
                             >
                                 <Bell size={20} />
-                                {/* Dummy Notification Badge */}
-                                <span className="absolute -top-1.5 -right-1 bg-[#EB3B18] text-white text-[9px] font-extrabold w-3.5 h-3.5 rounded-full flex items-center justify-center ring-2 ring-white">
-                                    3
-                                </span>
+                                {unreadCount > 0 && (
+                                    <span className="absolute -top-1.5 -right-1 bg-[#EB3B18] text-white text-[9px] font-extrabold w-3.5 h-3.5 rounded-full flex items-center justify-center ring-2 ring-white">
+                                        {unreadCount}
+                                    </span>
+                                )}
                             </button>
 
-                            {/* Notification Dropdown Menu (Matched identically to Cart Dropdown sizing/positioning) */}
+                            {/* Dynamic Notification Dropdown Menu */}
                             {isNotificationOpen && (
                                 <div className="absolute right-0 sm:-right-10 md:right-0 top-full mt-4 z-50 animate-in fade-in zoom-in-95 duration-200">
-                                    
-                                    <div className="w-85 bg-white rounded-2xl shadow-xl border border-gray-100 flex flex-col overflow-hidden text-left">
-                                        <div className="flex justify-between items-center p-4 border-b border-gray-100">
-                                            <h3 className="font-extrabold text-gray-900 text-lg">Notifications</h3>
-                                            <button 
-                                                onClick={() => setIsNotificationOpen(false)} 
-                                                className="text-gray-500 hover:text-gray-900 transition-colors p-1 cursor-pointer"
-                                                aria-label="Close notifications"
-                                            >
-                                                <X className="w-5 h-5" />
-                                            </button>
+                                    <div className="w-120 bg-white rounded-2xl shadow-xl border border-gray-100 flex flex-col overflow-hidden text-left">
+                                        <div className="p-4 border-b border-gray-100">
+                                            {/* CHANGED: Flex row for Title and X button */}
+                                            <div className="flex justify-between items-center mb-2">
+                                                <h3 className="font-extrabold text-gray-900 text-lg">Notifications</h3>
+                                                <button aria-label="Close option" onClick={() => setIsNotificationOpen(false)} className="text-gray-500 hover:text-gray-900 cursor-pointer p-1">
+                                                    <X className="w-5 h-5" />
+                                                </button>
+                                            </div>
+                                            {/* CHANGED: Mark all as read button right-aligned in its own block below title row */}
+                                            <div className="flex justify-end">
+                                                <button onClick={markAllAsRead} className="text-[10px] font-bold text-[#EB3B18] hover:underline cursor-pointer">
+                                                    Mark all as read
+                                                </button>
+                                            </div>
                                         </div>
                                         
                                         <div className="p-2 flex flex-col max-h-[50vh] overflow-y-auto">
-                                            {/* Dummy Notification 1 (Unread) */}
-                                            <div className="flex gap-3 p-3 hover:bg-gray-50 rounded-xl transition-colors cursor-pointer border-l-2 border-[#EB3B18] bg-orange-50/30">
-                                                <div className="mt-0.5 bg-orange-100 p-2 rounded-full shrink-0 h-fit">
-                                                    <Package className="w-4 h-4 text-[#EB3B18]" />
-                                                </div>
-                                                <div className="flex flex-col">
-                                                    <h4 className="text-[13px] font-bold text-gray-900 mb-0.5">Order Shipped</h4>
-                                                    <p className="text-xs text-gray-600 line-clamp-2">Your recent order for "Luxurious White Leather Sofa" has been shipped.</p>
-                                                    <span className="text-[10px] font-semibold text-gray-400 mt-1">2 hours ago</span>
-                                                </div>
-                                            </div>
-
-                                            {/* Dummy Notification 2 */}
-                                            <div className="flex gap-3 p-3 hover:bg-gray-50 rounded-xl transition-colors cursor-pointer">
-                                                <div className="mt-0.5 bg-blue-50 p-2 rounded-full shrink-0 h-fit">
-                                                    <Mail className="w-4 h-4 text-blue-600" />
-                                                </div>
-                                                <div className="flex flex-col">
-                                                    <h4 className="text-[13px] font-bold text-gray-900 mb-0.5">New Message</h4>
-                                                    <p className="text-xs text-gray-600 line-clamp-2">Olajide sent you a message regarding your inquiry.</p>
-                                                    <span className="text-[10px] font-semibold text-gray-400 mt-1">5 hours ago</span>
-                                                </div>
-                                            </div>
-
-                                            {/* Dummy Notification 3 */}
-                                            <div className="flex gap-3 p-3 hover:bg-gray-50 rounded-xl transition-colors cursor-pointer">
-                                                <div className="mt-0.5 bg-gray-100 p-2 rounded-full shrink-0 h-fit">
-                                                    <Heart className="w-4 h-4 text-gray-600" />
-                                                </div>
-                                                <div className="flex flex-col">
-                                                    <h4 className="text-[13px] font-medium text-gray-900 mb-0.5">Item Price Drop</h4>
-                                                    <p className="text-xs text-gray-500 line-clamp-2">An item in your wishlist has a new lower price.</p>
-                                                    <span className="text-[10px] font-semibold text-gray-400 mt-1">1 day ago</span>
-                                                </div>
-                                            </div>
+                                            {notifications.length === 0 ? (
+                                                <p className="text-sm text-gray-500 text-center py-8">No notifications yet.</p>
+                                            ) : (
+                                                notifications.map((notif) => (
+                                                    <div 
+                                                        key={notif.id} 
+                                                        onClick={() => markAsRead(notif.id)}
+                                                        className={`flex gap-3 p-3 hover:bg-gray-50 rounded-xl transition-colors cursor-pointer ${!notif.isRead ? 'border-l-2 border-[#EB3B18] bg-orange-50/20' : ''}`}
+                                                    >
+                                                        <div className={`mt-0.5 p-2 rounded-full shrink-0 h-fit ${!notif.isRead ? 'bg-orange-100' : 'bg-gray-100'}`}>
+                                                            {getNotificationIcon(notif.type)}
+                                                        </div>
+                                                        <div className="flex flex-col">
+                                                            <h4 className="text-[13px] font-bold text-gray-900 mb-0.5">{notif.title}</h4>
+                                                            <p className="text-xs text-gray-600 line-clamp-2">{notif.message}</p>
+                                                            <span className="text-[10px] font-semibold text-gray-400 mt-1">
+                                                                {new Date(notif.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                                            </span>
+                                                        </div>
+                                                    </div>
+                                                ))
+                                            )}
                                         </div>
 
                                         <div className="p-3 border-t border-gray-100 bg-gray-50">
@@ -336,7 +329,7 @@ export const Navbar = ({ onOpenSidebar }: NavbarProps) => {
                             )}
                         </div>
                         
-                        {/* Start Selling Button - Hidden on Mobile */}
+                        {/* Start Selling Button */}
                         <Link
                             href="/seller/dashboard"
                             className="hidden md:block px-4 py-2 bg-[#EB3B18] text-white rounded-md text-sm font-bold hover:bg-[#bf360c] transition-colors shadow-sm ml-2 cursor-pointer"
@@ -357,7 +350,6 @@ export const Navbar = ({ onOpenSidebar }: NavbarProps) => {
                             >
                                 <div className="w-8 h-8 md:w-9 md:h-9 rounded-full overflow-hidden border border-gray-200 hover:border-[#EB3B18] transition-all flex items-center justify-center bg-gray-50 text-gray-400">
                                     {user?.image ? (
-                                        // eslint-disable-next-line @next/next/no-img-element
                                         <img 
                                             src={user.image} 
                                             alt="Profile Avatar" 
@@ -369,10 +361,8 @@ export const Navbar = ({ onOpenSidebar }: NavbarProps) => {
                                 </div>
                             </button>
 
-                            {/* Avatar Dropdown Menu */}
                             {isAvatarOpen && (
                                 <div className="absolute right-0 top-full mt-3 w-64 bg-white rounded-xl shadow-lg border border-gray-100 z-50 animate-in fade-in zoom-in-95 duration-200 flex flex-col overflow-hidden text-left">
-                                    
                                     <Link 
                                         href="/profile" 
                                         onClick={() => setIsAvatarOpen(false)}
@@ -380,7 +370,6 @@ export const Navbar = ({ onOpenSidebar }: NavbarProps) => {
                                     >
                                         <User className="w-4 h-4 text-gray-600" /> My Account
                                     </Link>
-                                    
                                     <Link 
                                         href="/orders" 
                                         onClick={() => setIsAvatarOpen(false)}
@@ -388,7 +377,6 @@ export const Navbar = ({ onOpenSidebar }: NavbarProps) => {
                                     >
                                         <Package className="w-4 h-4 text-gray-600" /> Orders
                                     </Link>
-                                    
                                     <Link 
                                         href="/inbox" 
                                         onClick={() => setIsAvatarOpen(false)}
@@ -396,7 +384,6 @@ export const Navbar = ({ onOpenSidebar }: NavbarProps) => {
                                     >
                                         <Mail className="w-4 h-4 text-gray-600" /> Inbox
                                     </Link>
-                                    
                                     <Link 
                                         href="/wishlist" 
                                         onClick={() => setIsAvatarOpen(false)}
@@ -404,7 +391,6 @@ export const Navbar = ({ onOpenSidebar }: NavbarProps) => {
                                     >
                                         <Heart className="w-4 h-4 text-gray-600" /> Wishlist
                                     </Link>
-
                                     <Link 
                                         href="/vouchers" 
                                         onClick={() => setIsAvatarOpen(false)}
@@ -412,12 +398,8 @@ export const Navbar = ({ onOpenSidebar }: NavbarProps) => {
                                     >
                                         <Ticket className="w-4 h-4 text-gray-600" /> Voucher
                                     </Link>
-                                    
                                     <button 
-                                        onClick={() => {
-                                            setIsAvatarOpen(false);
-                                            // Add actual logout logic here later
-                                        }}
+                                        onClick={() => setIsAvatarOpen(false)}
                                         className="w-full text-center px-4 py-3.5 text-[#EB3B18] font-bold hover:bg-gray-50 transition-colors text-sm cursor-pointer"
                                     >
                                         Logout

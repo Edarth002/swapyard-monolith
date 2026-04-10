@@ -1,9 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useCart } from "@/app/context/CartContext";
 import Link from "next/link";
-import { Check, Lock, RotateCcw, Star, ArrowLeft, CreditCard, Building, Smartphone } from "lucide-react";
+import { useRouter } from "next/navigation"; 
+import { Check, Lock, RotateCcw, Star, ArrowLeft, CreditCard, Building, Smartphone, Loader2 } from "lucide-react";
 import ValuePropsSection from "@/components/buyer/listings/ValuePropsSection";
 
 const PAYMENT_METHODS = [
@@ -13,8 +14,37 @@ const PAYMENT_METHODS = [
 ];
 
 export default function PaymentPage() {
+    const router = useRouter(); 
     const { cartItems, cartTotal, cartCount } = useCart();
+    
+    // --- State Management ---
     const [selectedPayment, setSelectedPayment] = useState(PAYMENT_METHODS[0].id);
+    const [isMounted, setIsMounted] = useState(false);
+    const [deliveryFee, setDeliveryFee] = useState(0);
+
+    // --- Form State for Card Payment ---
+    const [cardData, setCardData] = useState({
+        cardNumber: "",
+        expiry: "",
+        cvc: "",
+        name: ""
+    });
+
+    // Load checkout data on mount
+    useEffect(() => {
+        setIsMounted(true);
+        try {
+            const storedCheckout = sessionStorage.getItem("swapyard_checkout");
+            if (storedCheckout) {
+                const parsedData = JSON.parse(storedCheckout);
+                if (parsedData.deliveryMethod?.price !== undefined) {
+                    setDeliveryFee(parsedData.deliveryMethod.price);
+                }
+            }
+        } catch (error) {
+            console.error("Failed to parse checkout data:", error);
+        }
+    }, []);
 
     // Format price to Naira
     const formatPrice = (price: number) => {
@@ -25,9 +55,65 @@ export default function PaymentPage() {
         }).format(price);
     };
 
-    // Assuming a flat delivery fee was carried over from checkout (or context)
-    const deliveryFee = cartTotal > 0 ? 3000 : 0; 
     const finalTotal = cartTotal + deliveryFee;
+
+    // Prevent hydration mismatch
+    if (!isMounted) {
+        return (
+            <div className="min-h-screen flex items-center justify-center bg-white">
+                <Loader2 className="w-8 h-8 text-[#EB3B18] animate-spin" />
+            </div>
+        );
+    }
+
+    // ==========================================
+    // INPUT FORMATTING HANDLERS
+    // ==========================================
+    
+    const handleCardNumberChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+        // Remove all non-digits, limit to 16 digits
+        const value = e.target.value.replace(/\D/g, "").substring(0, 16);
+        // Add a space after every 4 digits
+        const formatted = value.match(/.{1,4}/g)?.join(" ") || value;
+        setCardData({ ...cardData, cardNumber: formatted });
+    };
+
+    const handleExpiryChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+        // Remove all non-digits, limit to 4 digits
+        let value = e.target.value.replace(/\D/g, "").substring(0, 4);
+        // Add slash after 2nd digit
+        if (value.length >= 3) {
+            value = `${value.substring(0, 2)}/${value.substring(2)}`;
+        }
+        setCardData({ ...cardData, expiry: value });
+    };
+
+    const handleCvcChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+        // Remove all non-digits, limit to 3 digits
+        const value = e.target.value.replace(/\D/g, "").substring(0, 3);
+        setCardData({ ...cardData, cvc: value });
+    };
+
+    // ==========================================
+
+    // --- Handle Proceed to Review ---
+    const handleNextStep = (e: React.MouseEvent) => {
+        e.preventDefault();
+
+        // Save selected payment method to storage
+        const paymentData = {
+            method: selectedPayment,
+            // Only save card details if card is selected
+            ...(selectedPayment === "card" && {
+                cardNumber: cardData.cardNumber,
+                name: cardData.name
+            })
+        };
+        sessionStorage.setItem("swapyard_payment", JSON.stringify(paymentData));
+
+        // Route to review page
+        router.push("/review");
+    };
 
     return (
         <div className="min-h-screen bg-white font-sans text-gray-800 pb-16 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
@@ -73,28 +159,55 @@ export default function PaymentPage() {
                                     {method.icon}
                                 </div>
 
-                                {/* Expandable Card Form (Only shows if 'card' is selected) */}
+                                {/* Expandable Card Form */}
                                 {selectedPayment === "card" && method.id === "card" && (
-                                    <div className="p-6 bg-white border-t border-gray-100 flex flex-col gap-5">
+                                    <div className="p-6 bg-white border-t border-gray-100 flex flex-col gap-5" onClick={(e) => e.stopPropagation()}>
                                         <div className="flex flex-col">
                                             <label className="text-[10px] font-bold text-gray-600 uppercase tracking-wide mb-2">CARD NUMBER</label>
-                                            <input type="text" placeholder="0000 0000 0000 0000" className="w-full px-4 py-3 bg-gray-50/50 border border-gray-200 focus:border-[#EB3B18] outline-none text-sm text-gray-800 transition-colors tracking-widest" />
+                                            <input 
+                                                type="text" 
+                                                placeholder="0000 0000 0000 0000" 
+                                                value={cardData.cardNumber}
+                                                onChange={handleCardNumberChange}
+                                                maxLength={19} // 16 digits + 3 spaces
+                                                className="w-full px-4 py-3 bg-gray-50/50 border border-gray-200 focus:border-[#EB3B18] outline-none text-sm text-gray-800 transition-colors tracking-widest" 
+                                            />
                                         </div>
                                         
                                         <div className="flex flex-col sm:flex-row gap-5">
                                             <div className="flex-1 flex flex-col">
                                                 <label className="text-[10px] font-bold text-gray-600 uppercase tracking-wide mb-2">EXPIRY DATE</label>
-                                                <input type="text" placeholder="MM/YY" className="w-full px-4 py-3 bg-gray-50/50 border border-gray-200 focus:border-[#EB3B18] outline-none text-sm text-gray-800 transition-colors" />
+                                                <input 
+                                                    type="text" 
+                                                    placeholder="MM/YY" 
+                                                    value={cardData.expiry}
+                                                    onChange={handleExpiryChange}
+                                                    maxLength={5} // MM/YY is 5 chars
+                                                    className="w-full px-4 py-3 bg-gray-50/50 border border-gray-200 focus:border-[#EB3B18] outline-none text-sm text-gray-800 transition-colors" 
+                                                />
                                             </div>
                                             <div className="flex-1 flex flex-col">
                                                 <label className="text-[10px] font-bold text-gray-600 uppercase tracking-wide mb-2">SECURITY CODE (CVC)</label>
-                                                <input type="text" placeholder="123" maxLength={4} className="w-full px-4 py-3 bg-gray-50/50 border border-gray-200 focus:border-[#EB3B18] outline-none text-sm text-gray-800 transition-colors" />
+                                                <input 
+                                                    type="text" 
+                                                    placeholder="123" 
+                                                    value={cardData.cvc}
+                                                    onChange={handleCvcChange}
+                                                    maxLength={3} // Exactly 3 chars
+                                                    className="w-full px-4 py-3 bg-gray-50/50 border border-gray-200 focus:border-[#EB3B18] outline-none text-sm text-gray-800 transition-colors" 
+                                                />
                                             </div>
                                         </div>
 
                                         <div className="flex flex-col">
                                             <label className="text-[10px] font-bold text-gray-600 uppercase tracking-wide mb-2">NAME ON CARD</label>
-                                            <input type="text" placeholder="e.g. James Garett" className="w-full px-4 py-3 bg-gray-50/50 border border-gray-200 focus:border-[#EB3B18] outline-none text-sm text-gray-800 transition-colors" />
+                                            <input 
+                                                type="text" 
+                                                placeholder="e.g. James Garett" 
+                                                value={cardData.name}
+                                                onChange={(e) => setCardData({...cardData, name: e.target.value})}
+                                                className="w-full px-4 py-3 bg-gray-50/50 border border-gray-200 focus:border-[#EB3B18] outline-none text-sm text-gray-800 transition-colors" 
+                                            />
                                         </div>
                                     </div>
                                 )}
@@ -123,17 +236,17 @@ export default function PaymentPage() {
                         >
                             BACK
                         </Link>
-                        <Link 
-                            href="/review" // <-- Update this path
+                        <button 
+                            onClick={handleNextStep}
                             aria-label="Review your order details"
                             className="px-6 py-2.5 text-[10px] font-bold text-white uppercase tracking-widest bg-[#EB3B18] rounded-sm hover:bg-[#d93616] transition-colors flex items-center gap-2 cursor-pointer"
                         >
                             REVIEW ORDER <span className="text-sm leading-none">&rsaquo;</span>
-                        </Link>
+                        </button>
                     </div>
                 </div>
 
-                {/* RIGHT COLUMN: Sidebar (Summary & Info) - Exactly matches CheckoutPage */}
+                {/* RIGHT COLUMN: Sidebar (Summary & Info) */}
                 <div className="w-full lg:w-[35%] max-w-[400px] flex flex-col">
                     
                     {/* Order Summary Box */}

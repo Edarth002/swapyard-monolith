@@ -1,10 +1,11 @@
-// components/buyer/ListingCard.tsx
 "use client";
 
 import Image from "next/image";
 import Link from "next/link";
 import { Heart, MapPin, Star, ShieldCheck, ShoppingCart } from "lucide-react";
-import { useCart } from "@/app/context/CartContext"; // <-- Added import for global cart state
+import { useCart } from "@/app/context/CartContext"; 
+import { useWishlist } from "@/app/context/WishlistContext"; 
+import toast from "react-hot-toast"; 
 
 export interface ListingCardProps {
   id: string;
@@ -31,8 +32,12 @@ export default function ListingCard({
   rating,
   reviewsCount,
 }: ListingCardProps) {
-  // Destructure the addToCart function from our global context
+  // 1. Destructure contexts
   const { addToCart } = useCart();
+  const { addToWishlist, removeFromWishlist, isInWishlist } = useWishlist();
+
+  // Check if this specific item is in the wishlist
+  const isWishlisted = isInWishlist(id);
 
   // Format price to Naira
   const formattedPrice = new Intl.NumberFormat("en-NG", {
@@ -42,10 +47,11 @@ export default function ListingCard({
   }).format(price);
 
   // Handle Add to Cart logic
-  const handleAddToCart = (e: React.MouseEvent) => {
+  const handleAddToCart = async (e: React.MouseEvent) => {
     e.preventDefault(); 
+    e.stopPropagation(); // Prevents the link from triggering when clicking the button
     
-    // Call the global state function to add the item to the cart
+    // Optimistic UI update: Instantly update global cart context
     addToCart({
       id,
       title,
@@ -54,14 +60,53 @@ export default function ListingCard({
       quantity: 1
     });
     
-    console.log(`Added ${title} to cart!`);
+    // Instantly show success toast
+    toast.success(`Successfully added to cart!`);
+
+    // Quietly sync with the database in the background
+    try {
+      const res = await fetch('/api/cart', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          listingId: id,
+          quantity: 1,
+        }),
+      });
+
+      if (!res.ok) {
+        if (res.status === 401) {
+          toast.error("Please log in as a buyer to save items across devices.");
+        } else {
+          const data = await res.json();
+          console.error("Cart sync error:", data.message);
+        }
+      }
+    } catch (err) {
+      console.error("Error syncing cart to database:", err);
+    }
   };
 
-  // Handle Favorite logic
+  // Handle Favorite/Wishlist logic
   const handleFavorite = (e: React.MouseEvent) => {
     e.preventDefault();
-    e.stopPropagation();
-    console.log(`Toggled favorite for ${title}`);
+    e.stopPropagation(); // Prevents the link from triggering when clicking the heart
+    
+    if (isWishlisted) {
+      removeFromWishlist(id);
+      toast.success("Removed from wishlist");
+    } else {
+      addToWishlist({
+        id,
+        title,
+        price,
+        imageUrl,
+        location,
+        rating,
+        reviewsCount
+      });
+      toast.success("Added to wishlist!");
+    }
   };
 
   return (
@@ -90,13 +135,15 @@ export default function ListingCard({
         </div>
       </Link>
 
-      {/* Favorite Button - Absolute positioned over the Image Link */}
+      {/* Favorite Button - Conditional styling added for active state */}
       <button 
-        aria-label={`Save ${title} to favorites`} 
+        aria-label={isWishlisted ? `Remove ${title} from favorites` : `Save ${title} to favorites`} 
         onClick={handleFavorite} 
-        className="absolute top-2 sm:top-3 right-2 sm:right-3 p-1.5 sm:p-2 bg-white/90 backdrop-blur-sm rounded-full text-gray-400 hover:text-red-500 hover:bg-white transition-colors shadow-sm cursor-pointer z-10"
+        className={`absolute top-2 sm:top-3 right-2 sm:right-3 p-1.5 sm:p-2 bg-white/90 backdrop-blur-sm rounded-full transition-colors shadow-sm cursor-pointer z-10 ${
+          isWishlisted ? "text-red-500 hover:text-red-600" : "text-gray-400 hover:text-red-500 hover:bg-white"
+        }`}
       >
-        <Heart className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+        <Heart className={`w-3.5 h-3.5 sm:w-4 sm:h-4 ${isWishlisted ? "fill-current" : ""}`} />
       </button>
 
       {/* Content */}

@@ -59,6 +59,29 @@ export default function LoginPage() {
             }
             
             setSuccess("Login Successful, redirecting...")
+
+            // ==========================================
+            // NEW: Merge Guest Cart Logic
+            // ==========================================
+            try {
+                const localCart = JSON.parse(localStorage.getItem("swapyard_cart") || "[]");
+                
+                if (localCart.length > 0) {
+                    const itemsToMerge = localCart.map((item: any) => ({
+                        listingId: item.id,
+                        quantity: item.quantity,
+                    }));
+
+                    await fetch("/api/cart/merge", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ items: itemsToMerge }),
+                    });
+                }
+            } catch (mergeError) {
+                console.error("Failed to merge cart:", mergeError);
+            }
+            // ==========================================
             
             if (data.user?.role?.toLowerCase() === "seller") {
                 router.push("/seller/overview");
