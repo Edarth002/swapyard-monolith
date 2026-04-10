@@ -2,9 +2,9 @@ import type { Metadata } from "next";
 import { Manrope } from "next/font/google";
 import { GoogleOAuthProvider } from "@react-oauth/google";
 import FacebookProvider from "./auth/components/facebooksdk";
-import "./globals.css";
-// Import your new wrapper here
+import { CartProvider } from "./context/CartContext";
 import { ClientNavigation } from "@/components/layouts/ClientNavigation"; 
+import "./globals.css"
 
 const manrope = Manrope({ 
     subsets: ["latin"],
@@ -27,12 +27,14 @@ export default function RootLayout({
                 <GoogleOAuthProvider clientId={process.env.GOOGLE_CLIENT_ID!}>
                 
                     <FacebookProvider/>
-                    <ClientNavigation />
                     
-                    {/* Main content area */}
-                    <main className="flex-1">
-                        {children}
-                    </main>
+                    {/* Wrap the app with CartProvider to enable global cart state */}
+                    <CartProvider>
+                        {/* Wrap the children inside our new smart ClientNavigation */}
+                        <ClientNavigation>
+                            {children}
+                        </ClientNavigation>
+                    </CartProvider>
 
                 </GoogleOAuthProvider>
             </body>

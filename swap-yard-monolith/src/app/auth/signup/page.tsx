@@ -6,7 +6,8 @@ import { Input } from "@/components/ui/Input";
 import Logo from "@/components/ui/Logo";
 import { Lock, Mail } from "lucide-react";
 import Image from "next/image";
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { useCountriesAndStates } from "@/hooks/buyer/useCountriesAndStates"; // <-- Hook imported
 
 export default function SignupPage() {
     const [role, setRole] = useState("buyer");
@@ -14,15 +15,36 @@ export default function SignupPage() {
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState("");
 
+    // Initialize custom hook
+    const {
+        countries,
+        states,
+        selectedCountry,
+        setSelectedCountry,
+        selectedState,
+        setSelectedState,
+        loading: geoLoading
+    } = useCountriesAndStates("Nigeria");
+
     const [form, setForm] = useState({
         firstname: "",
         lastname: "",
         email: "",
         phoneNumber: "",
-        state: "Lagos",
+        country: "Nigeria", // Added country to form state
+        state: "",          // State will auto-populate from hook
         password: "",
         confirmPassword: "",
     });
+
+    // Keep form state in sync when the custom hook's selections change
+    useEffect(() => {
+        setForm((prev) => ({
+            ...prev,
+            country: selectedCountry,
+            state: selectedState,
+        }));
+    }, [selectedCountry, selectedState]);
 
     const handleChange = (field: string, value: string) => {
         setForm(prev => ({ ...prev, [field]: value }));
@@ -31,6 +53,12 @@ export default function SignupPage() {
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         setError("");
+
+        // Prevent hitting the server if they didn't agree to terms
+        if (!contract) {
+            setError("You must agree to the Terms of use and privacy policy.");
+            return;
+        }
 
         if (form.password !== form.confirmPassword) {
             setError("Passwords do not match");
@@ -51,7 +79,8 @@ export default function SignupPage() {
                     email: form.email,
                     password: form.password,
                     phoneNumber: form.phoneNumber,
-                    state: form.state,
+                    country: form.country, // Sending country
+                    state: form.state,     // Sending state
                     role: role.toUpperCase(),
                     contract: contract, 
                 }),
@@ -60,11 +89,22 @@ export default function SignupPage() {
             const data = await res.json();
 
             if (!res.ok) {
+                // Log the exact errors to the browser console so you can see them!
+                console.log("BACKEND REJECTION DETAILS:", data);
+
+                // If Zod sent back field errors, display the first one to the user
+                if (data.errors && data.errors.fieldErrors) {
+                    const firstFailedField = Object.keys(data.errors.fieldErrors)[0];
+                    const firstErrorMessage = data.errors.fieldErrors[firstFailedField][0];
+                    setError(`${firstFailedField}: ${firstErrorMessage}`);
+                    return;
+                }
+
+                // Otherwise, show the general message (like "Unable to process registration")
                 setError(data.message || "Something went wrong");
                 return;
             }
 
-            
             window.location.href = "/auth/login";
 
         } catch {
@@ -141,21 +181,51 @@ export default function SignupPage() {
                         </div>
                     </div>
 
-                    {/* State */}
-                    <div className="space-y-1.5">
-                        <label htmlFor="Select state" className="text-sm font-medium text-gray-700">
-                            State
-                        </label>
-                        <select
-                            id="Select state"
-                            value={form.state}
-                            onChange={(e) => handleChange("state", e.target.value)}
-                            className="w-full rounded-lg border border-gray-300 px-3 py-3 text-sm"
-                        >
-                            <option>Lagos</option>
-                            <option>Abuja</option>
-                            <option>Rivers</option>
-                        </select>
+                    {/* Location Dropdowns (Replaced standalone state field) */}
+                    <div className="grid grid-cols-2 gap-4">
+                        <div className="space-y-1.5">
+                            <label htmlFor="country" className="text-sm font-medium text-gray-700">
+                                Country
+                            </label>
+                            <select
+                                id="country"
+                                value={selectedCountry}
+                                disabled={geoLoading}
+                                onChange={(e) => setSelectedCountry(e.target.value)}
+                                className="w-full rounded-lg border border-gray-300 px-3 py-3 text-sm focus:border-[#EB3B18] focus:ring-1 focus:ring-[#EB3B18] outline-none transition-colors appearance-none bg-white cursor-pointer disabled:opacity-60"
+                            >
+                                {geoLoading ? (
+                                    <option>Loading...</option>
+                                ) : (
+                                    countries.map((country, idx) => (
+                                        <option key={`${country}-${idx}`} value={country}>{country}</option>
+                                    ))
+                                )}
+                            </select>
+                        </div>
+                        
+                        <div className="space-y-1.5">
+                            <label htmlFor="state" className="text-sm font-medium text-gray-700">
+                                State
+                            </label>
+                            <select
+                                id="state"
+                                value={selectedState}
+                                disabled={geoLoading || states.length === 0}
+                                onChange={(e) => setSelectedState(e.target.value)}
+                                className="w-full rounded-lg border border-gray-300 px-3 py-3 text-sm focus:border-[#EB3B18] focus:ring-1 focus:ring-[#EB3B18] outline-none transition-colors appearance-none bg-white cursor-pointer disabled:opacity-60"
+                            >
+                                {geoLoading ? (
+                                    <option>Loading...</option>
+                                ) : states.length === 0 ? (
+                                    <option value="">No states found</option>
+                                ) : (
+                                    states.map((state, idx) => (
+                                        <option key={`${state}-${idx}`} value={state}>{state}</option>
+                                    ))
+                                )}
+                            </select>
+                        </div>
                     </div>
 
                     <Input
