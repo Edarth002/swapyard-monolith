@@ -169,40 +169,6 @@ export async function POST(req: Request) {
       );
     }
 
-    const paystackStatus = paystackData.data.status;
-
-    if (paystackStatus !== "success") {
-      await prisma.payment.update({
-      where: { id: order.payment!.id },
-      data: {
-        providerRef: paystackData.data.reference,
-        status: "FAILED",
-      },
-    });
-
-      return NextResponse.json(
-        { message: "Payment initialization failed" }, 
-        { status: 400 }
-      );
-    }
-
-    const finalPaystackStatus = "SUCCESS";
-
-    await prisma.payment.update({
-      where: { id: order.payment!.id },
-      data: {
-        providerRef: paystackData.data.reference,
-        status: finalPaystackStatus,
-      },
-    });
-
-    await prisma.order.update({
-      where: { id: order.id },
-      data: {
-        status: "PAID",
-      },
-    });
-
     return NextResponse.json(
       {
         message: "Order created",
