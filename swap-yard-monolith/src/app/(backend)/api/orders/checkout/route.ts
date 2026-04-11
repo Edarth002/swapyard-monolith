@@ -127,6 +127,14 @@ export async function POST(req: Request) {
         },
       });
 
+      //Mark listings as sold to prevent overselling
+      for (const item of orderItemsData) {
+        await tx.listing.update({
+          where: { id: item.listingId },
+          data: { status: "SOLD" },
+        });
+      }
+
       await tx.cartItem.deleteMany({
         where: { cartId: cart.id },
       });
@@ -185,6 +193,13 @@ export async function POST(req: Request) {
       data: {
         providerRef: paystackData.data.reference,
         status: finalPaystackStatus,
+      },
+    });
+
+    await prisma.order.update({
+      where: { id: order.id },
+      data: {
+        status: "PAID",
       },
     });
 
