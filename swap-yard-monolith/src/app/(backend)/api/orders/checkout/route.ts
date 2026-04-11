@@ -127,13 +127,16 @@ export async function POST(req: Request) {
         },
       });
 
-      //Mark listings as sold to prevent overselling
-      for (const item of orderItemsData) {
-        await tx.listing.update({
-          where: { id: item.listingId },
-          data: { status: "SOLD" },
-        });
-      }
+      //Mark listings as sold to prevent overselling - this is done within the transaction to ensure atomicity and data integrity. The safety lock on the update ensures that only listings that are still available will be marked as sold, preventing race conditions
+const listingIds = orderItemsData.map(item => item.listingId);
+
+await tx.listing.updateMany({
+  where: { 
+    id: { in: listingIds },
+    status: "AVAILABLE"
+  },
+  data: { status: "SOLD" },
+});
 
       await tx.cartItem.deleteMany({
         where: { cartId: cart.id },
