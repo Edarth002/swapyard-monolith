@@ -6,7 +6,6 @@ import { verifyToken } from "@/lib/token";
 import { createListingSchema, getListingsSchema } from "./schema";
 import { createSlug } from "@/lib/slugGenerator";
 import { fetchListings } from "@/lib/getListingLogic";
-import { id } from "zod/v4/locales";
 
 export const runtime = "nodejs";
 
@@ -85,7 +84,7 @@ export async function POST(req: Request) {
     const images = formData.getAll("images").filter((file): file is File => file instanceof File && file.size > 0);
     uploaded = images.length ? await uploadManyImageFiles(images, { subfolder: "listings" }) : [];
 
-    const product = await prisma.$transaction(async (tx) => {
+    const result = await prisma.$transaction(async (tx) => {
 
     try {
       await tx.idempotencyKey.create({
@@ -94,25 +93,26 @@ export async function POST(req: Request) {
           status: "PENDING",
         },
       })
-    }
-       catch (err: any) {
+    } catch (err: any) {
         if (err.code === "P2002") {
           const existingKey = await tx.idempotencyKey.findUnique({
             where: { key: idempotencyKey },
           });
 
           if (!existingKey) {
-            return NextResponse.json({ message: "Unexpected Error" }, { status: 409 });
+            throw new Error("Idempotency key conflict");
           }
 
           if (existingKey?.status === "COMPLETED") {
-            return NextResponse.json(existingKey.response);
+            return existingKey.response as any; 
           }
 
-          return NextResponse.json({ message: "Request is already being processed" }, { status: 409 });
+          throw new Error("Request is already being processed");
         }
+        throw err;
+       }
 
-      await tx.listing.create({
+        const product = await tx.listing.create({
           data: {
             ...validatedInput.data,
             slug: createSlug(validatedInput.data.name),
@@ -141,18 +141,18 @@ export async function POST(req: Request) {
           },
         });
 
-    return NextResponse.json(responseData, { status: 201 });
+        return responseData;
   
-  } catch (err) {
-    console.error("Error creating listing:", err);
-
-    //rollback newly uploaded images on cloudinary if something goes wrong during upload (Principle: Atomicity)
-    if (uploaded.length) {
-      await deleteManyByPublicIds(uploaded.map(img => img.public_id));
+  }, { timeout: 10000 });
+    return NextResponse.json(result, { status: 201 });
+  } catch (err: any) {
+    if (err.message === "Idempotency key conflict" || err.message === "Request is already being processed") {
+      return NextResponse.json({ message: err.message }, { status: 409 });
     }
-    return NextResponse.json({ message: "Server error" }, { status: 500 });
-  }}
-
+    console.error("Error creating listing:", err);
+    return NextResponse.json({ message: "Server Error" }, { status: 500 });
+  }
+}
 
 export async function GET(req: Request) {
   try {
