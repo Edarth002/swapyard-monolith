@@ -351,5 +351,6 @@ model idempotencyKey{
   id        String   @id @default(cuid())
   key       String   @unique
   status    String   @default("PENDING")
+  response  Json?
   createdAt DateTime @default(now())
 }

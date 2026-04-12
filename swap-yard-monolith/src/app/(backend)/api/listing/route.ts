@@ -6,13 +6,14 @@ import { verifyToken } from "@/lib/token";
 import { createListingSchema, getListingsSchema } from "./schema";
 import { createSlug } from "@/lib/slugGenerator";
 import { fetchListings } from "@/lib/getListingLogic";
+import { id } from "zod/v4/locales";
 
 export const runtime = "nodejs";
 
 async function getCookie(req: Request, name: string) {
   const cookie = req.headers.get("cookie");
   if (!cookie) return null;
-
+ 
   return (
     cookie
       .split("; ")
@@ -27,6 +28,11 @@ function toNullableString(value: FormDataEntryValue | null) {
 }
 
 export async function POST(req: Request) {
+   const idempotencyKey = req.headers.get("idempotency-key");
+    if (!idempotencyKey) {
+      return NextResponse.json({ message: "Idempotency-Key header is required" }, { status: 400 });
+    }
+
   let uploaded: Array<{ url: string; public_id: string }> = [];
 
   try {
@@ -79,27 +85,62 @@ export async function POST(req: Request) {
     const images = formData.getAll("images").filter((file): file is File => file instanceof File && file.size > 0);
     uploaded = images.length ? await uploadManyImageFiles(images, { subfolder: "listings" }) : [];
 
-    const listing = await prisma.listing.create({
-      data: {
-        ...validatedInput.data,
-        slug: createSlug(validatedInput.data.name),
-        sellerId: user.id,
-        images: {
-          create: uploaded.map((img) => ({
-            url: img.url,
-            publicId: img.public_id,
-          })),
+    const product = await prisma.$transaction(async (tx) => {
+
+    try {
+      await tx.idempotencyKey.create({
+        data: {
+          key: idempotencyKey,
+          status: "PENDING",
         },
-      },
-      include: {
-        images: true,
-        category: { select: { id: true, name: true, image: true } },
-        seller: { select: { id: true, firstname: true, lastname: true } },
-      },
-    });
+      })
+    }
+       catch (err: any) {
+        if (err.code === "P2002") {
+          const existingKey = await tx.idempotencyKey.findUnique({
+            where: { key: idempotencyKey },
+          });
 
-    return NextResponse.json({ message: "Listing created successfully", listing }, { status: 201 });
+          if (!existingKey) {
+            return NextResponse.json({ message: "Unexpected Error" }, { status: 409 });
+          }
 
+          if (existingKey?.status === "COMPLETED") {
+            return NextResponse.json(existingKey.response);
+          }
+
+          return NextResponse.json({ message: "Request is already being processed" }, { status: 409 });
+        }
+
+      await tx.listing.create({
+          data: {
+            ...validatedInput.data,
+            slug: createSlug(validatedInput.data.name),
+            sellerId: user.id,
+            images: {
+              create: uploaded.map((img) => ({
+                url: img.url,
+                publicId: img.public_id,
+              })),
+            },
+          },
+          include: {
+            images: true,
+            category: { select: { id: true, name: true, image: true } },
+            seller: { select: { id: true, firstname: true, lastname: true } },
+          },
+        });
+
+        await tx.idempotencyKey.update({
+          where: { key: idempotencyKey },
+          data: {
+            status: "COMPLETED",
+            
+          }
+    
+
+    return NextResponse.json({ message: "Listing created successfully", listing: product }, { status: 201 });
+  
   } catch (err) {
     console.error("Error creating listing:", err);
 
@@ -108,8 +149,7 @@ export async function POST(req: Request) {
       await deleteManyByPublicIds(uploaded.map(img => img.public_id));
     }
     return NextResponse.json({ message: "Server error" }, { status: 500 });
-  }
-}
+  }}
 
 
 export async function GET(req: Request) {
