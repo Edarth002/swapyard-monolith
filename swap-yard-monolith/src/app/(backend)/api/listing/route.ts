@@ -131,15 +131,17 @@ export async function POST(req: Request) {
           },
         });
 
+        const responseData = { message: "Listing created successfully", listing: product };
+        
         await tx.idempotencyKey.update({
           where: { key: idempotencyKey },
           data: {
             status: "COMPLETED",
-            
-          }
-    
+            response: responseData,
+          },
+        });
 
-    return NextResponse.json({ message: "Listing created successfully", listing: product }, { status: 201 });
+    return NextResponse.json(responseData, { status: 201 });
   
   } catch (err) {
     console.error("Error creating listing:", err);
