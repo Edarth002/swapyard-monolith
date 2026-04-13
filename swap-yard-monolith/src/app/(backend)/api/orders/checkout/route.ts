@@ -47,6 +47,21 @@ export async function POST(req: Request) {
       return NextResponse.json({ message: "Unauthorized" }, { status: 401 });
     }
 
+    const existingEntry = await prisma.idempotencyKey.findUnique({
+      where: { key: idempotencyKey },
+    });
+
+    if (existingEntry?.status === "COMPLETED") {
+      return NextResponse.json(existingEntry.response, { status: 200 });
+    }
+
+    if (existingEntry?.status === "PENDING") {
+      const twoMinutesAgo = new Date(Date.now() - 2 * 60000);
+      if (existingEntry.updatedAt > twoMinutesAgo) {
+        return NextResponse.json({ message: "Request is already being processed" }, { status: 409 });
+      }
+    }
+
     const body = await req.json();
     const parsed = checkoutSchema.safeParse(body);
 
@@ -109,27 +124,15 @@ export async function POST(req: Request) {
     const totalAmount = subtotal + deliveryFee;
 
     const order = await prisma.$transaction(async (tx) => {
-      try {
-        await tx.idempotencyKey.create({
-          data: {
-            key: idempotencyKey,
-            status: "PENDING",
-          },
-        })
-      } catch (error:any) {
-        if (error.code === "P2002") {
-          const existingKey = await tx.idempotencyKey.findUnique({
-            where: { key: idempotencyKey },
-          });
-          if (!existingKey) {
-            throw new Error("Idempotency key conflict");
-          }
-          if (existingKey?.status === "COMPLETED") {
-            return existingKey.response as any; 
-          }
-          throw new Error("Request is already being processed");
-        }
-      }
+       if (!cart || cart.items.length === 0) {
+      throw new Error("Cart is empty");
+    }
+
+      await tx.idempotencyKey.upsert({
+        where: { key: idempotencyKey },
+        update: { status: "PENDING" },
+        create: { key: idempotencyKey, status: "PENDING" },
+      });
 
       const newOrder = await tx.order.create({
         data: {
@@ -197,7 +200,7 @@ export async function POST(req: Request) {
         body: JSON.stringify({
           email: user.email,
           amount: Math.round(totalAmount * 100),
-          reference: order.payment?.id,
+          reference: order.order.payment?.id,
           callback_url: `${process.env.NEXT_PUBLIC_APP_URL}/payment/success`,
         }),
       }
@@ -212,14 +215,23 @@ export async function POST(req: Request) {
       );
     }
 
-    return NextResponse.json(
-      {
-        message: "Order created",
-        paymentUrl: paystackData.data.authorization_url,
-      },
-      { status: 200 }
-    );
+   const finalResponse = {
+      message: "Order created",
+      paymentUrl: paystackData.data.authorization_url,
+      order: order.order, 
+    };
+
+    await prisma.idempotencyKey.update({
+      where: { key: idempotencyKey },
+      data: { response: finalResponse as any },
+    });
+
+    return NextResponse.json(finalResponse, { status: 200 });
   } catch (error: any) {
+
+    if (error.message === "Cart is empty") {
+      return NextResponse.json({ message: "Cart is empty" }, { status: 400 });
+    }
     console.error("CHECKOUT ERROR:", error);
     return NextResponse.json(
       { message: error.message || "Server error" },
