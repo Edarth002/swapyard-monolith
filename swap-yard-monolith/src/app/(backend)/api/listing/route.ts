@@ -51,7 +51,6 @@ export async function POST(req: Request) {
       return NextResponse.json({ message: "Forbidden: Sellers only" }, { status: 403 });
     }
 
-    // 1. PRE-TRANSACTION CHECK: Return immediately if already completed to save Cloudinary costs
     const existingEntry = await prisma.idempotencyKey.findUnique({
       where: { key: idempotencyKey },
     });
@@ -61,8 +60,8 @@ export async function POST(req: Request) {
     }
 
     if (existingEntry?.status === "PENDING") {
-      const fiveMinutesAgo = new Date(Date.now() - 5 * 60000);
-      if (existingEntry.updatedAt > fiveMinutesAgo) {
+      const twoMinutesAgo = new Date(Date.now() - 2 * 60000);
+      if (existingEntry.updatedAt > twoMinutesAgo) {
         return NextResponse.json({ message: "Request is already being processed" }, { status: 409 });
       }
     }
@@ -90,7 +89,6 @@ export async function POST(req: Request) {
       }, { status: 400 });
     }
 
-    // 3. VALIDATE CATEGORY before uploading images
     if (validatedInput.data.categoryId) {
       const categoryExists = await prisma.category.findUnique({
         where: { id: validatedInput.data.categoryId },
@@ -98,12 +96,10 @@ export async function POST(req: Request) {
       if (!categoryExists) return NextResponse.json({ message: "Invalid Category" }, { status: 400 });
     }
 
-    // 4. UPLOAD IMAGES only after passing idempotency and validation checks
     const images = formData.getAll("images").filter((file): file is File => file instanceof File && file.size > 0);
     uploaded = images.length ? await uploadManyImageFiles(images, { subfolder: "listings" }) : [];
 
     const result = await prisma.$transaction(async (tx) => {
-      // Upsert the key to PENDING status
       await tx.idempotencyKey.upsert({
         where: { key: idempotencyKey },
         update: { status: "PENDING" },
@@ -113,8 +109,7 @@ export async function POST(req: Request) {
       const product = await tx.listing.create({
         data: {
           ...validatedInput.data,
-          // Append partial key to slug to ensure uniqueness for identical item names
-          slug: `${createSlug(validatedInput.data.name)}-${idempotencyKey.slice(0, 6)}`,
+          slug: `${createSlug(validatedInput.data.name)}`,
           sellerId: user.id,
           images: {
             create: uploaded.map((img) => ({
