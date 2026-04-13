@@ -60,7 +60,6 @@ export async function POST(req: Request) {
       return NextResponse.json(existingEntry.response, { status: 200 });
     }
 
-    // 2. DEADLOCK GUARD: If PENDING for > 5 mins, assume crash and allow retry
     if (existingEntry?.status === "PENDING") {
       const fiveMinutesAgo = new Date(Date.now() - 5 * 60000);
       if (existingEntry.updatedAt > fiveMinutesAgo) {
