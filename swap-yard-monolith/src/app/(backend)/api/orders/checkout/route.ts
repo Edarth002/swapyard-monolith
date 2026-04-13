@@ -32,6 +32,14 @@ async function getUser(req: Request) {
 }
 
 export async function POST(req: Request) {
+  const idempotencyKey = req.headers.get("Idempotency-Key");
+  if (!idempotencyKey) {
+    return NextResponse.json(
+      { message: "Idempotency-Key header is required" },
+      { status: 400 }
+    );
+  }
+
   try {
     const user = await getUser(req);
 
@@ -101,6 +109,28 @@ export async function POST(req: Request) {
     const totalAmount = subtotal + deliveryFee;
 
     const order = await prisma.$transaction(async (tx) => {
+      try {
+        await tx.idempotencyKey.create({
+          data: {
+            key: idempotencyKey,
+            status: "PENDING",
+          },
+        })
+      } catch (error:any) {
+        if (error.code === "P2002") {
+          const existingKey = await tx.idempotencyKey.findUnique({
+            where: { key: idempotencyKey },
+          });
+          if (!existingKey) {
+            throw new Error("Idempotency key conflict");
+          }
+          if (existingKey?.status === "COMPLETED") {
+            return existingKey.response as any; 
+          }
+          throw new Error("Request is already being processed");
+        }
+      }
+
       const newOrder = await tx.order.create({
         data: {
           buyerId: user.id,
@@ -142,7 +172,17 @@ export async function POST(req: Request) {
         where: { cartId: cart.id },
       });
 
-      return newOrder;
+      const responseData = { message: "Order created", order: newOrder };
+      
+      await tx.idempotencyKey.update({
+        where: { key: idempotencyKey },
+        data: {
+          status: "COMPLETED",
+          response: responseData,
+        },
+      });
+
+      return responseData;
     });
 
     // Initialize payment with Paystack not implemented in transaction to avoid long-running transactions and potential timeouts and also because it involves external API calls which should be handled separately from database operations. Also, developer paystack acct is nonexistent

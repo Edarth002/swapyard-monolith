@@ -86,31 +86,31 @@ export async function POST(req: Request) {
 
     const result = await prisma.$transaction(async (tx) => {
 
-    try {
-      await tx.idempotencyKey.create({
-        data: {
-          key: idempotencyKey,
-          status: "PENDING",
-        },
-      })
-    } catch (err: any) {
-        if (err.code === "P2002") {
-          const existingKey = await tx.idempotencyKey.findUnique({
-            where: { key: idempotencyKey },
-          });
+        try {
+          await tx.idempotencyKey.create({
+            data: {
+              key: idempotencyKey,
+              status: "PENDING",
+            },
+          })
+        } catch (err: any) {
+            if (err.code === "P2002") {
+              const existingKey = await tx.idempotencyKey.findUnique({
+                where: { key: idempotencyKey },
+              });
 
-          if (!existingKey) {
-            throw new Error("Idempotency key conflict");
+              if (!existingKey) {
+                throw new Error("Idempotency key conflict");
+              }
+
+              if (existingKey?.status === "COMPLETED") {
+                return existingKey.response as any; 
+              }
+
+              throw new Error("Request is already being processed");
+            }
+            throw err;
           }
-
-          if (existingKey?.status === "COMPLETED") {
-            return existingKey.response as any; 
-          }
-
-          throw new Error("Request is already being processed");
-        }
-        throw err;
-       }
 
         const product = await tx.listing.create({
           data: {
@@ -143,16 +143,16 @@ export async function POST(req: Request) {
 
         return responseData;
   
-  }, { timeout: 10000 });
-    return NextResponse.json(result, { status: 201 });
-  } catch (err: any) {
-    if (err.message === "Idempotency key conflict" || err.message === "Request is already being processed") {
-      return NextResponse.json({ message: err.message }, { status: 409 });
+        }, { timeout: 10000 });
+          return NextResponse.json(result, { status: 201 });
+        } catch (err: any) {
+          if (err.message === "Idempotency key conflict" || err.message === "Request is already being processed") {
+            return NextResponse.json({ message: err.message }, { status: 409 });
+          }
+          console.error("Error creating listing:", err);
+          return NextResponse.json({ message: "Server Error" }, { status: 500 });
+        }
     }
-    console.error("Error creating listing:", err);
-    return NextResponse.json({ message: "Server Error" }, { status: 500 });
-  }
-}
 
 export async function GET(req: Request) {
   try {
