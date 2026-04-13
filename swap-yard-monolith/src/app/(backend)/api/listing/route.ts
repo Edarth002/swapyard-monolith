@@ -27,10 +27,10 @@ function toNullableString(value: FormDataEntryValue | null) {
 }
 
 export async function POST(req: Request) {
-   const idempotencyKey = req.headers.get("idempotency-key");
-    if (!idempotencyKey) {
-      return NextResponse.json({ message: "Idempotency-Key header is required" }, { status: 400 });
-    }
+  const idempotencyKey = req.headers.get("idempotency-key");
+  if (!idempotencyKey) {
+    return NextResponse.json({ message: "Idempotency-Key header is required" }, { status: 400 });
+  }
 
   let uploaded: Array<{ url: string; public_id: string }> = [];
 
@@ -49,6 +49,23 @@ export async function POST(req: Request) {
 
     if (!user || user.role !== "SELLER") {
       return NextResponse.json({ message: "Forbidden: Sellers only" }, { status: 403 });
+    }
+
+    // 1. PRE-TRANSACTION CHECK: Return immediately if already completed to save Cloudinary costs
+    const existingEntry = await prisma.idempotencyKey.findUnique({
+      where: { key: idempotencyKey },
+    });
+
+    if (existingEntry?.status === "COMPLETED") {
+      return NextResponse.json(existingEntry.response, { status: 200 });
+    }
+
+    // 2. DEADLOCK GUARD: If PENDING for > 5 mins, assume crash and allow retry
+    if (existingEntry?.status === "PENDING") {
+      const fiveMinutesAgo = new Date(Date.now() - 5 * 60000);
+      if (existingEntry.updatedAt > fiveMinutesAgo) {
+        return NextResponse.json({ message: "Request is already being processed" }, { status: 409 });
+      }
     }
 
     const formData = await req.formData();
@@ -74,6 +91,7 @@ export async function POST(req: Request) {
       }, { status: 400 });
     }
 
+    // 3. VALIDATE CATEGORY before uploading images
     if (validatedInput.data.categoryId) {
       const categoryExists = await prisma.category.findUnique({
         where: { id: validatedInput.data.categoryId },
@@ -81,78 +99,64 @@ export async function POST(req: Request) {
       if (!categoryExists) return NextResponse.json({ message: "Invalid Category" }, { status: 400 });
     }
 
+    // 4. UPLOAD IMAGES only after passing idempotency and validation checks
     const images = formData.getAll("images").filter((file): file is File => file instanceof File && file.size > 0);
     uploaded = images.length ? await uploadManyImageFiles(images, { subfolder: "listings" }) : [];
 
     const result = await prisma.$transaction(async (tx) => {
+      // Upsert the key to PENDING status
+      await tx.idempotencyKey.upsert({
+        where: { key: idempotencyKey },
+        update: { status: "PENDING" },
+        create: { key: idempotencyKey, status: "PENDING" },
+      });
 
-        try {
-          await tx.idempotencyKey.create({
-            data: {
-              key: idempotencyKey,
-              status: "PENDING",
-            },
-          })
-        } catch (err: any) {
-            if (err.code === "P2002") {
-              const existingKey = await tx.idempotencyKey.findUnique({
-                where: { key: idempotencyKey },
-              });
-
-              if (!existingKey) {
-                throw new Error("Idempotency key conflict");
-              }
-
-              if (existingKey?.status === "COMPLETED") {
-                return existingKey.response as any; 
-              }
-
-              throw new Error("Request is already being processed");
-            }
-            throw err;
-          }
-
-        const product = await tx.listing.create({
-          data: {
-            ...validatedInput.data,
-            slug: createSlug(validatedInput.data.name),
-            sellerId: user.id,
-            images: {
-              create: uploaded.map((img) => ({
-                url: img.url,
-                publicId: img.public_id,
-              })),
-            },
+      const product = await tx.listing.create({
+        data: {
+          ...validatedInput.data,
+          // Append partial key to slug to ensure uniqueness for identical item names
+          slug: `${createSlug(validatedInput.data.name)}-${idempotencyKey.slice(0, 6)}`,
+          sellerId: user.id,
+          images: {
+            create: uploaded.map((img) => ({
+              url: img.url,
+              publicId: img.public_id,
+            })),
           },
-          include: {
-            images: true,
-            category: { select: { id: true, name: true, image: true } },
-            seller: { select: { id: true, firstname: true, lastname: true } },
-          },
-        });
+        },
+        include: {
+          images: true,
+          category: { select: { id: true, name: true, image: true } },
+          seller: { select: { id: true, firstname: true, lastname: true } },
+        },
+      });
 
-        const responseData = { message: "Listing created successfully", listing: product };
-        
-        await tx.idempotencyKey.update({
-          where: { key: idempotencyKey },
-          data: {
-            status: "COMPLETED",
-            response: responseData,
-          },
-        });
+      const responseData = { message: "Listing created successfully", listing: product };
+      
+      await tx.idempotencyKey.update({
+        where: { key: idempotencyKey },
+        data: {
+          status: "COMPLETED",
+          response: responseData as any,
+        },
+      });
 
-        return responseData;
-  
-        }, { timeout: 10000 });
-          return NextResponse.json(result, { status: 201 });
-        } catch (err: any) {
-          if (err.message === "Idempotency key conflict" || err.message === "Request is already being processed") {
-            return NextResponse.json({ message: err.message }, { status: 409 });
-          }
-          console.error("Error creating listing:", err);
-          return NextResponse.json({ message: "Server Error" }, { status: 500 });
-        }
+      return responseData;
+    }, { timeout: 15000 });
+
+    return NextResponse.json(result, { status: 201 });
+
+  } catch (err: any) {
+    // 5. CLEANUP: If DB transaction fails, delete the images from Cloudinary
+    if (uploaded.length > 0) {
+      const publicIds = uploaded.map(img => img.public_id);
+      await deleteManyByPublicIds(publicIds).catch(console.error);
     }
+
+    console.error("Error creating listing:", err);
+    return NextResponse.json({ message: err.message || "Server Error" }, { status: 500 });
+  }
+}
 
 export async function GET(req: Request) {
   try {
