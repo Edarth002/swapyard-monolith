@@ -40,6 +40,10 @@ async function getSeller(req: Request) {
 
 export async function POST(req: Request) {
   let uploadedImage: any = null;
+  const idempotencyKey = req.headers.get("idempotency-key")
+  if (!idempotencyKey) {
+    return NextResponse.json({ message: "Idempotency-Key header is required" }, { status: 400 });
+  }
 
   try {
     const seller = await getSeller(req);
@@ -91,19 +95,53 @@ export async function POST(req: Request) {
       });
     }
 
-    const category = await prisma.category.create({
-      data: {
-        name,
-        slug, 
-        image: uploadedImage?.url || null,
-        publicId: uploadedImage?.public_id || null,
-      },
-    });
+    const categoryItem = await prisma.$transaction(async (tx) => {
+      
+      try {
+        await tx.idempotencyKey.create({
+          data: {
+            key: idempotencyKey,
+            status: "PENDING",
+          },
+        });
+      } catch (error: any) {
+        if (error.code === "P2002") {
+          const existingKey = await tx.idempotencyKey.findUnique({
+            where: { key: idempotencyKey },
+          });
+          if (!existingKey) {
+            throw new Error("Idempotency key conflict");
+          }
+          if (existingKey?.status === "COMPLETED") {
+            return existingKey.response as any; 
+          }
+          throw new Error("Request is already being processed");
+        }
+      }
+      
+      const category = await tx.category.create({
+        data: {
+          name,
+          slug, 
+          image: uploadedImage?.url || null,
+          publicId: uploadedImage?.public_id || null,
+        },
+      });
 
-    return NextResponse.json(
-      { message: "Category created", category },
-      { status: 201 }
-    );
+      const responseData = { message: "Category created", category };
+
+      await tx.idempotencyKey.update({
+        where: { key: idempotencyKey },
+        data: {
+          status: "COMPLETED",
+          response: responseData,
+        },
+      });
+
+      return responseData;
+    });
+    
+    return NextResponse.json(categoryItem, { status: 201 });
   } catch (err: any) {
     console.error(err);
 
