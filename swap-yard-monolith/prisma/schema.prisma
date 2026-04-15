@@ -45,6 +45,7 @@ model User {
 enum Role {
   BUYER
   SELLER
+  ADMIN
 }
 
 model VerificationToken {
