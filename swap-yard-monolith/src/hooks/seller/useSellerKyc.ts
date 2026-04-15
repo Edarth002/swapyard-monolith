@@ -1,4 +1,4 @@
-import { useState, ChangeEvent, FormEvent } from "react";
+import { useState, ChangeEvent, FormEvent, useEffect } from "react";
 
 interface KycFormData {
     fullName: string;
@@ -11,11 +11,11 @@ interface KycFormData {
 }
 
 export function useSellerKyc() {
+    const [isFetchingProfile, setIsFetchingProfile] = useState(true);
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState("");
     const [success, setSuccess] = useState(false);
 
-    // Text inputs
     const [formData, setFormData] = useState<KycFormData>({
         fullName: "",
         emailAddress: "",
@@ -26,12 +26,39 @@ export function useSellerKyc() {
         ninNumber: ""
     });
 
-    // File inputs
     const [files, setFiles] = useState({
         profilePicture: null as File | null,
         businessLicense: null as File | null,
         verifiedId: null as File | null
     });
+
+    // --- NEW: Fetch Profile Data on Mount ---
+    useEffect(() => {
+        const fetchUserData = async () => {
+            try {
+                const res = await fetch("/api/auth/me");
+                if (res.ok) {
+                    const data = await res.json();
+                    const user = data.user;
+                    
+                    setFormData(prev => ({
+                        ...prev,
+                        fullName: `${user.firstname || ""} ${user.lastname || ""}`.trim(),
+                        emailAddress: user.email || "",
+                        phoneNumber: user.phoneNumber || "",
+                        // Format date for the HTML date input (YYYY-MM-DD)
+                        dateOfBirth: user.dateOfBirth ? new Date(user.dateOfBirth).toISOString().split('T')[0] : ""
+                    }));
+                }
+            } catch (err) {
+                console.error("Failed to load user profile", err);
+            } finally {
+                setIsFetchingProfile(false);
+            }
+        };
+
+        fetchUserData();
+    }, []);
 
     const handleInputChange = (e: ChangeEvent<HTMLInputElement>) => {
         const { id, value } = e.target;
@@ -51,31 +78,35 @@ export function useSellerKyc() {
         setSuccess(false);
 
         try {
-            // Because we are sending files, we MUST use FormData, not JSON
             const submitData = new FormData();
             
-            // Append all text fields
-            Object.entries(formData).forEach(([key, value]) => {
-                if (value) submitData.append(key, value);
-            });
+            // Map text fields correctly to match backend schema
+            if (formData.fullName) submitData.append("fullName", formData.fullName);
+            if (formData.businessName) submitData.append("businessName", formData.businessName);
+            if (formData.vatNumber) submitData.append("vatNumber", formData.vatNumber);
+            if (formData.ninNumber) submitData.append("nin", formData.ninNumber); // Mapped
 
-            // Append all files if they exist
-            if (files.profilePicture) submitData.append("profilePicture", files.profilePicture);
+            // Append files with exact names backend expects
             if (files.businessLicense) submitData.append("businessLicense", files.businessLicense);
-            if (files.verifiedId) submitData.append("verifiedId", files.verifiedId);
+            if (files.verifiedId) submitData.append("idDocument", files.verifiedId); // Mapped
 
-            const res = await fetch("/api/seller/kyc", {
+            const res = await fetch("/api/verification", { 
                 method: "POST",
-                // Do NOT set Content-Type header; the browser sets it automatically with the boundary for FormData
                 body: submitData
             });
 
             const data = await res.json();
 
-            if (!res.ok) throw new Error(data.message || "Failed to submit verification");
+            if (!res.ok) {
+                if (data.error && typeof data.error === 'object') {
+                    const firstError = Object.values(data.error).flat()[0];
+                    throw new Error(typeof firstError === 'string' ? firstError : "Validation failed");
+                }
+                throw new Error(data.error || data.message || "Failed to submit verification");
+            }
 
             setSuccess(true);
-            alert("KYC documents submitted successfully for review!");
+            window.scrollTo({ top: 0, behavior: 'smooth' });
             
         } catch (err: any) {
             console.error("KYC Submit Error:", err);
@@ -89,6 +120,7 @@ export function useSellerKyc() {
         formData,
         files,
         isLoading,
+        isFetchingProfile,
         error,
         success,
         handleInputChange,

@@ -17,7 +17,7 @@ export interface Listing {
 }
 
 export interface SellerProfile {
-    id: string; // Needed for fetching reviews
+    id: string; 
     firstName: string;
     lastName: string;
     bio: string;
@@ -26,7 +26,7 @@ export interface SellerProfile {
     isVerified?: boolean;
 }
 
-// NEW: Interface for Reviews
+// Interface for Reviews
 export interface Review {
     id: string;
     rating: number;
@@ -34,8 +34,6 @@ export interface Review {
     createdAt: string;
     buyer: {
         id: string;
-        // The backend currently only sends 'id'. 
-        // We define these in case the backend team updates the select statement.
         firstname?: string;
         lastname?: string;
         image?: string;
@@ -62,21 +60,18 @@ export function useSellerStore() {
     const [statusFilter, setStatusFilter] = useState("All");
 
     useEffect(() => {
-        // We need to fetch the profile first to get the user's ID
-        // so we can pass it as 'sellerId' to the reviews endpoint.
         const initializeStore = async () => {
             setIsLoading(true);
             try {
                 const profileData = await fetchSellerProfile();
                 
-                // Fetch listings and reviews in parallel once we know who the user is
-                const promises: Promise<any>[] = [fetchStoreItems()];
-                
+                // Fetch listings and reviews in parallel ONLY after we have the seller's ID
                 if (profileData && profileData.id) {
-                    promises.push(fetchReviews(profileData.id));
+                    await Promise.all([
+                        fetchStoreItems(profileData.id),
+                        fetchReviews(profileData.id)
+                    ]);
                 }
-
-                await Promise.all(promises);
 
             } catch (err) {
                 console.error("Initialization error", err);
@@ -90,7 +85,9 @@ export function useSellerStore() {
 
     const fetchSellerProfile = async () => {
         try {
-            const res = await fetch("/api/auth/me");
+            const res = await fetch("/api/auth/me", {
+                credentials: "include"
+            });
             if (!res.ok) return null;
             const data = await res.json();
             
@@ -99,9 +96,9 @@ export function useSellerStore() {
                 firstName: data.user.firstname || "",
                 lastName: data.user.lastname || "",
                 bio: data.user.bio || "",
-                profileImageUrl: data.user.image || null, // Updated to match schema ('image' instead of 'avatarUrl')
+                profileImageUrl: data.user.image || null, 
                 createdAt: data.user.createdAt,
-                isVerified: true // Fallback or map from sellerAccount relation if available
+                isVerified: true 
             };
             
             setSellerProfile(profile);
@@ -112,10 +109,12 @@ export function useSellerStore() {
         }
     };
 
-    const fetchStoreItems = async () => {
+    const fetchStoreItems = async (sellerId: string) => {
         try {
             setError("");
-            const res = await fetch("/api/listing?limit=50");
+            const res = await fetch(`/api/listing?sellerId=${sellerId}&limit=50`, {
+                credentials: "include"
+            });
             const data = await res.json();
 
             if (!res.ok) throw new Error(data.message || "Failed to fetch store items");
@@ -126,11 +125,9 @@ export function useSellerStore() {
         }
     };
 
-    // NEW: Fetch Reviews Function
-    // NEW: Fetch Reviews Function
+    // Fetch Reviews Function
     const fetchReviews = async (sellerId: string) => {
         try {
-            // FIX: Changed /api/reviews to /api/review to match the backend folder name
             const res = await fetch(`/api/review?sellerId=${sellerId}&limit=50`);
             const data = await res.json();
 
@@ -149,7 +146,6 @@ export function useSellerStore() {
             }
         } catch (err) {
             console.error("Failed to fetch reviews", err);
-            // Don't set global error for reviews failing so the store listings still show
         }
     };
 
@@ -169,6 +165,7 @@ export function useSellerStore() {
 
             const res = await fetch(`/api/listing/${itemToDelete}`, {
                 method: "DELETE",
+                credentials: "include",
             });
 
             if (!res.ok) {
@@ -190,7 +187,7 @@ export function useSellerStore() {
     const filteredItems = listings.filter(item => {
         const matchesSearch = item.name.toLowerCase().includes(searchQuery.toLowerCase());
         const mappedStatus = item.status === "AVAILABLE" ? "Active" : 
-                            item.status === "SOLD" ? "Sold" : "Draft";
+                             item.status === "SOLD" ? "Sold" : "Draft";
         const matchesStatus = statusFilter === "All" || mappedStatus === statusFilter;
         return matchesSearch && matchesStatus;
     });
