@@ -38,19 +38,11 @@ const ROUTE_PERMISSIONS: Array<{
 
   { methods: ["POST"], pattern: /^\/api\/orders\/[^/]+\/(cancel|refund)$/, roles: ["ADMIN"] },
 
-  // { methods: ["GET", "PUT", "PATCH"], pattern: /^\/api\/seller\/dashboard(\/|$)/, roles: ["SELLER", "ADMIN"] },
-  // { methods: ["GET"], pattern: /^\/api\/seller\/analytics(\/|$)/, roles: ["SELLER", "ADMIN"] },
 
   { methods: ["GET", "PUT", "PATCH"], pattern: /^\/api\/auth\/me(\/|$)/, roles: ["BUYER", "SELLER", "ADMIN"] },
-  // { methods: ["GET", "POST", "DELETE"], pattern: /^\/api\/BUYER\/wishlist(\/|$)/, roles: ["BUYER"] },
 
   { methods: ["POST"], pattern: /^\/api\/review$/, roles: ["BUYER"] },
   { methods: ["DELETE", "PATCH"], pattern: /^\/api\/review\/[^/]+$/, roles: ["ADMIN"] },
-
-  // { methods: ["GET", "PATCH"], pattern: /^\/api\/users(\/|$)/, roles: ["ADMIN"] },
-
-  // { methods: ["POST"], pattern: /^\/api\/payments\/webhook$/, roles: [], public: true },
-
 
   { methods: ["POST"], pattern: /^\/api\/verification\/payout$/, roles: ["SELLER"] },
 ];
