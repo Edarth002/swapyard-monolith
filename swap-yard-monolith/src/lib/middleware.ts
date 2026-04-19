@@ -96,10 +96,8 @@ export async function middleware(req: NextRequest) {
     return NextResponse.next();
   }
 
-  // 2. Find the matching route rule
   const rule = matchRoute(method, pathname);
 
-  // 3. No rule found → treat as a protected catch-all requiring authentication
   if (!rule) {
     const user = await extractUser(req);
     if (!user) return unauthorized("Authentication required.");
