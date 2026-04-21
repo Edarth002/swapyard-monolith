@@ -73,7 +73,7 @@ model Listing {
   slug           String            @unique
   price          Float
   images         Image[]
-  description    String
+  description    String           @db.Text
   location       String?
   state          String?
   status         ProductStatus     @default(AVAILABLE)
