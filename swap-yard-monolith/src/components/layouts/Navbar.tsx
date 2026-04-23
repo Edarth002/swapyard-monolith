@@ -134,9 +134,8 @@ export const Navbar = ({ onOpenSidebar }: NavbarProps) => {
                 {/* Center Links (Desktop Only) */}
                 <div className="hidden lg:flex gap-8 items-center text-sm font-semibold">
                     <Link href="/listings" className="text-[#EB3B18] transition-colors cursor-pointer">Browse</Link>
-                    <Link href="/seller" className="hover:text-[#EB3B18] transition-colors cursor-pointer">Sell Items</Link>
-                    <Link href="/getting-started" className="hover:text-[#EB3B18] transition-colors cursor-pointer">Getting Started</Link>
-                    <Link href="/categories" className="hover:text-[#EB3B18] transition-colors cursor-pointer">Categories</Link>
+                    <Link href="/orders" className="hover:text-[#EB3B18] transition-colors cursor-pointer">Orders</Link>
+                    <Link href="/wishlist" className="hover:text-[#EB3B18] transition-colors cursor-pointer">Wishlist</Link>
                 </div>
 
                 {/* Right Side Controls */}
