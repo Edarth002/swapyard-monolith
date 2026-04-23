@@ -1,4 +1,5 @@
 import { Button } from "@/components/ui/Button";
+import Link from "next/link";
 
 export const PromoSection = () => {
     return (
@@ -11,7 +12,9 @@ export const PromoSection = () => {
                 <h2 className="text-3xl md:text-4xl font-bold text-white mb-4">Ready to get started?</h2>
                 <p className="text-gray-200 mb-8 max-w-2xl mx-auto">Explore thousands of  products from trusted sellers near you
                     Browse unique secondhand furniture and home essentials.</p>
-                <Button className="bg-[#EB3B18] px-8 py-3">Sign Up Now</Button>
+                <Link href="/listings">
+                    <Button className="bg-[#EB3B18] px-8 py-3">Browse Listings</Button>
+                </Link>
             </div>
         </section>
     );

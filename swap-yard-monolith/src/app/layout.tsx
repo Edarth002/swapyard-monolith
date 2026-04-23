@@ -26,7 +26,7 @@ export default function RootLayout({
 }>) {
     return (
         <html lang="en">
-            <body className={`${manrope.className} font-sans min-h-screen flex flex-col bg-[#F9FAFB]`} suppressHydrationWarning>
+            <body className={`${manrope.className} min-h-screen flex flex-col bg-[#F9FAFB]`} suppressHydrationWarning>
                 
                 {/* Global Toaster: Now toasts will show up anywhere in the app */}
                 <Toaster position="top-center" />
