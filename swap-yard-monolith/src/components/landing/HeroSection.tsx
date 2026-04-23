@@ -25,7 +25,7 @@ export const HeroSection = () => {
                     A marketplace for secondhand furniture, decor, appliances, and more. We make local buying safe and easy. No noise. No spam. Just good deals from people nearby.
                 </p>
 
-                <div 
+                {/* <div 
                     className="bg-white p-2 rounded-xl shadow-2xl flex flex-col md:flex-row gap-2 w-full max-w-3xl mx-auto mb-10"
                     role="search"
                 >
@@ -76,7 +76,7 @@ export const HeroSection = () => {
                 <div className="flex flex-col sm:flex-row gap-4 justify-center w-full sm:w-auto">
                     <Button className="bg-[#EB3B18] px-8 py-3.5 text-base w-full sm:w-auto">Start Selling</Button>
                     <Button variant="outline" className="bg-transparent border-white text-white px-8 py-3.5 text-base hover:bg-white/20 w-full sm:w-auto">Browse Listings</Button>
-                </div>
+                </div> */}
             </div>
         </section>
     );
