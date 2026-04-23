@@ -133,3 +133,28 @@ export async function POST(req: Request) {
     return NextResponse.json({ message: err.message || "Server error" }, { status: 500 });
   }
 }
+
+
+export async function GET() {
+  try {
+    const categories = await prisma.category.findMany({
+      orderBy: { createdAt: "desc" },
+      select: {
+        id: true,
+        name: true,
+        slug: true,
+        image: true,
+      },
+    });
+
+    return NextResponse.json(categories, { status: 200 });
+
+  } catch (err: any) {
+    console.error("GET CATEGORIES ERROR:", err);
+
+    return NextResponse.json(
+      { message: "Failed to fetch categories" },
+      { status: 500 }
+    );
+  }
+}

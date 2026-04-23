@@ -43,7 +43,7 @@ export const Categories = () => {
     useEffect(() => {
         const fetchCategories = async () => {
             try {
-                const res = await fetch("/api/categories");
+                const res = await fetch("/api/category");
                 const data = await res.json();
 
                 const formatted = data.map((cat: any) => ({
