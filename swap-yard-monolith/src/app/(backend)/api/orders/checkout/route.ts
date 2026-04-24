@@ -32,11 +32,34 @@ async function getUser(req: Request) {
 }
 
 export async function POST(req: Request) {
+  const idempotencyKey = req.headers.get("Idempotency-Key");
+  if (!idempotencyKey) {
+    return NextResponse.json(
+      { message: "Idempotency-Key header is required" },
+      { status: 400 }
+    );
+  }
+
   try {
     const user = await getUser(req);
 
     if (!user) {
       return NextResponse.json({ message: "Unauthorized" }, { status: 401 });
+    }
+
+    const existingEntry = await prisma.idempotencyKey.findUnique({
+      where: { key: idempotencyKey },
+    });
+
+    if (existingEntry?.status === "COMPLETED") {
+      return NextResponse.json(existingEntry.response, { status: 200 });
+    }
+
+    if (existingEntry?.status === "PENDING") {
+      const twoMinutesAgo = new Date(Date.now() - 2 * 60000);
+      if (existingEntry.updatedAt > twoMinutesAgo) {
+        return NextResponse.json({ message: "Request is already being processed" }, { status: 409 });
+      }
     }
 
     const body = await req.json();
@@ -80,18 +103,13 @@ export async function POST(req: Request) {
       );
     }
 
-
     let subtotal = 0;
-
     const orderItemsData = cart.items.map((item) => {
       const listing = item.listing;
       if (listing.status !== "AVAILABLE") {
-        throw new Error("Some items are no longer available");
+        throw new Error(`Item ${listing.name} is no longer available`);
       }
-
-      const total = listing.price * item.quantity;
-      subtotal += total;
-
+      subtotal += listing.price * item.quantity;
       return {
         listingId: listing.id,
         sellerId: listing.sellerId,
@@ -102,45 +120,77 @@ export async function POST(req: Request) {
     });
 
     const deliveryFee = 0;
-    const platformCommission = subtotal * 1.5;
+    const platformCommission = subtotal * 0.015; 
     const totalAmount = subtotal + deliveryFee;
 
-    const order = await prisma.order.create({
-      data: {
-        buyerId: user.id,
-        pickupLocation,
-        pickupNote,
+    const order = await prisma.$transaction(async (tx) => {
+       if (!cart || cart.items.length === 0) {
+      throw new Error("Cart is empty");
+    }
 
-        subtotal,
-        deliveryFee,
-        platformCommission,
-        totalAmount,
+      await tx.idempotencyKey.upsert({
+        where: { key: idempotencyKey },
+        update: { status: "PENDING" },
+        create: { key: idempotencyKey, status: "PENDING" },
+      });
 
-        items: {
-          create: orderItemsData,
-        },
-
-        payment: {
-          create: {
-            buyerId: user.id,
-            amount: totalAmount,
-            status: "PENDING",
-            provider: "PAYSTACK",
+      const newOrder = await tx.order.create({
+        data: {
+          buyerId: user.id,
+          pickupLocation,
+          pickupNote,
+          subtotal,
+          deliveryFee,
+          platformCommission,
+          totalAmount,
+          items: {
+            create: orderItemsData,
+          },
+          payment: {
+            create: {
+              buyerId: user.id,
+              amount: totalAmount,
+              status: "PENDING",
+              provider: "PAYSTACK",
+            },
           },
         },
-      },
-      include: {
-        payment: true,
-      },
+        include: {
+          payment: true,
+        },
+      });
+
+      //Mark listings as sold to prevent overselling - this is done within the transaction to ensure atomicity and data integrity. The safety lock on the update ensures that only listings that are still available will be marked as sold, preventing race conditions
+      const listingIds = orderItemsData.map(item => item.listingId);
+
+      await tx.listing.updateMany({
+        where: { 
+          id: { in: listingIds },
+          status: "AVAILABLE"
+        },
+        data: { status: "SOLD" },
+      });
+
+      await tx.cartItem.deleteMany({
+        where: { cartId: cart.id },
+      });
+
+      const responseData = { message: "Order created", order: newOrder };
+      
+      await tx.idempotencyKey.update({
+        where: { key: idempotencyKey },
+        data: {
+          status: "COMPLETED",
+          response: responseData,
+        },
+      });
+
+      return responseData;
     });
 
-    await prisma.cartItem.deleteMany({
-      where: { cartId: cart.id },
-    });
-
-    // ✅ PAYSTACK INIT: Pending final stage of application
+    // Initialize payment with Paystack not implemented in transaction to avoid long-running transactions and potential timeouts and also because it involves external API calls which should be handled separately from database operations. Also, developer paystack acct is nonexistent
     const paystackRes = await fetch(
-      "https://api.paystack.co/transaction/initialize",
+      "https://api.api.paystack.co/transaction/initialize",
       {
         method: "POST",
         headers: {
@@ -150,7 +200,7 @@ export async function POST(req: Request) {
         body: JSON.stringify({
           email: user.email,
           amount: Math.round(totalAmount * 100),
-          reference: order.payment?.id,
+          reference: order.order.payment?.id,
           callback_url: `${process.env.NEXT_PUBLIC_APP_URL}/payment/success`,
         }),
       }
@@ -165,22 +215,27 @@ export async function POST(req: Request) {
       );
     }
 
-    await prisma.payment.update({
-      where: { id: order.payment!.id },
-      data: {
-        providerRef: paystackData.data.reference,
-      },
+   const finalResponse = {
+      message: "Order created",
+      paymentUrl: paystackData.data.authorization_url,
+      order: order.order, 
+    };
+
+    await prisma.idempotencyKey.update({
+      where: { key: idempotencyKey },
+      data: { response: finalResponse as any },
     });
 
-    return NextResponse.json(
-      {
-        message: "Order created",
-        paymentUrl: paystackData.data.authorization_url,
-      },
-      { status: 200 }
-    );
-  } catch (error) {
+    return NextResponse.json(finalResponse, { status: 200 });
+  } catch (error: any) {
+
+    if (error.message === "Cart is empty") {
+      return NextResponse.json({ message: "Cart is empty" }, { status: 400 });
+    }
     console.error("CHECKOUT ERROR:", error);
-    return NextResponse.json({ message: "Server error" }, { status: 500 });
+    return NextResponse.json(
+      { message: error.message || "Server error" },
+      { status: 500 }
+    );
   }
 }

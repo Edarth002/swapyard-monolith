@@ -6,8 +6,8 @@ import {
 } from "@/app/(backend)/utils/cloudinary";
 import { prisma } from "@/lib/prisma";
 import { verifyToken } from "@/lib/token";
-import { redisClient } from "@/lib/redis";
 import { updateListingSchema } from "../schema";
+import { createSlug } from "@/lib/slugGenerator";
 
 export const runtime = "nodejs";
 
@@ -114,23 +114,21 @@ export async function GET(
 
 export async function PATCH(
   req: Request,
-  ctx: { params: Promise<{ id: string }> }
+  ctx: { params: Promise<{ slug: string }> }
 ) {
   let newlyUploaded: Array<{ url: string; public_id: string }> = [];
 
   try {
-    const { id } = await ctx.params;
+    const { slug } = await ctx.params;
 
     const auth = await getAuthenticatedSeller(req);
     if ("error" in auth) return auth.error;
-
     const { user } = auth;
 
+    //Here you first locate listing by slug to get its ID and current images, then you perform the update using the ID. This way you can handle slug changes and image replacements correctly without losing track of the listing.
     const existing = await prisma.listing.findUnique({
-      where: { id },
-      include: {
-        images: true,
-      },
+      where: { slug },
+      include: { images: true },
     });
 
     if (!existing) {
@@ -144,7 +142,10 @@ export async function PATCH(
     const formData = await req.formData();
 
     const rawInput = {
-      name: formData.get("name") !== null ? String(formData.get("name")).trim() : undefined,
+      name:
+        formData.get("name") !== null
+          ? String(formData.get("name")).trim()
+          : undefined,
       description:
         formData.get("description") !== null
           ? String(formData.get("description")).trim()
@@ -160,7 +161,9 @@ export async function PATCH(
           ? String(formData.get("condition")).trim()
           : undefined,
       price:
-        formData.get("price") !== null ? Number(formData.get("price")) : undefined,
+        formData.get("price") !== null
+          ? Number(formData.get("price"))
+          : undefined,
       negotiable:
         formData.get("negotiable") !== null
           ? String(formData.get("negotiable")) === "true"
@@ -204,23 +207,6 @@ export async function PATCH(
       replaceImages,
     } = validatedInput.data;
 
-    if (categoryId) {
-      const categoryExists = await prisma.category.findUnique({
-        where: { id: categoryId },
-        select: { id: true },
-      });
-
-      if (!categoryExists) {
-        return NextResponse.json(
-          { message: "Selected category does not exist" },
-          { status: 400 }
-        );
-      }
-    }
-
-    const images = formData
-      .getAll("images")
-      .filter((file): file is File => file instanceof File && file.size > 0);
 
     const data: Prisma.ListingUpdateInput = {};
 
@@ -234,33 +220,60 @@ export async function PATCH(
     if (negotiable !== undefined) data.negotiable = negotiable;
     if (offersDelivery !== undefined) data.offersDelivery = offersDelivery;
     if (contact !== undefined) data.contact = contact;
-    if (categoryId !== undefined) data.category = categoryId
-      ? { connect: { id: categoryId } }
-      : { disconnect: true };
 
-    if (images.length > 0) {
-      newlyUploaded = await uploadManyImageFiles(images, { subfolder: "listings" });
+    if (name !== undefined && name !== existing.name) {
+      data.slug = createSlug(name);
+    }
 
-      if (replaceImages) {
-        data.images = {
-          deleteMany: {},
-          create: newlyUploaded.map((img) => ({
-            url: img.url,
-            publicId: img.public_id,
-          })),
-        };
+    if (categoryId !== undefined) {
+      if (categoryId) {
+        const categoryExists = await prisma.category.findUnique({
+          where: { id: categoryId },
+          select: { id: true },
+        });
+
+        if (!categoryExists) {
+          return NextResponse.json(
+            { message: "Selected category does not exist" },
+            { status: 400 }
+          );
+        }
+
+        data.category = { connect: { id: categoryId } };
       } else {
-        data.images = {
-          create: newlyUploaded.map((img) => ({
-            url: img.url,
-            publicId: img.public_id,
-          })),
-        };
+        data.category = { disconnect: true };
       }
     }
 
+    const images = formData
+      .getAll("images")
+      .filter(
+        (file): file is File => file instanceof File && file.size > 0
+      );
+
+    if (images.length > 0) {
+      newlyUploaded = await uploadManyImageFiles(images, {
+        subfolder: "listings",
+      });
+
+      data.images = replaceImages
+        ? {
+            deleteMany: {},
+            create: newlyUploaded.map((img) => ({
+              url: img.url,
+              publicId: img.public_id,
+            })),
+          }
+        : {
+            create: newlyUploaded.map((img) => ({
+              url: img.url,
+              publicId: img.public_id,
+            })),
+          };
+    }
+
     const listing = await prisma.listing.update({
-      where: { id },
+      where: { id: existing.id },
       data,
       include: {
         images: true,
@@ -285,13 +298,12 @@ export async function PATCH(
     if (images.length > 0 && replaceImages) {
       const oldPublicIds = existing.images
         .map((img) => img.publicId)
-        .filter((publicId): publicId is string => Boolean(publicId));
+        .filter((id): id is string => Boolean(id));
 
       if (oldPublicIds.length) {
         await deleteManyByPublicIds(oldPublicIds);
       }
     }
-
 
     return NextResponse.json(
       { message: "Listing updated successfully", listing },
@@ -300,17 +312,12 @@ export async function PATCH(
   } catch (err) {
     console.error("Error updating listing:", err);
 
-    if (newlyUploaded.length) {
-      const uploadedPublicIds = newlyUploaded
-        .map((img) => img.public_id)
-        .filter(Boolean);
+    //rollback newly uploaded images on cloudinary if something goes wrong during upload (Principle: Atomicity)
 
-      if (uploadedPublicIds.length) {
-        try {
-          await deleteManyByPublicIds(uploadedPublicIds);
-        } catch (cleanupError) {
-          console.error("Error cleaning up uploaded images:", cleanupError);
-        }
+    if (newlyUploaded.length) {
+      const ids = newlyUploaded.map((img) => img.public_id).filter(Boolean);
+      if (ids.length) {
+        await deleteManyByPublicIds(ids);
       }
     }
 

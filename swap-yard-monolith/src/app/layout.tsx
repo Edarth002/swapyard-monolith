@@ -4,10 +4,10 @@ import { GoogleOAuthProvider } from "@react-oauth/google";
 import FacebookProvider from "./auth/components/facebooksdk";
 import { CartProvider } from "./context/CartContext";
 import { NotificationProvider } from "./context/NotificationContext";
-import { WishlistProvider } from "./context/WishlistContext"; // <-- Added WishlistProvider
-import { Toaster } from "react-hot-toast"; // <-- Added global Toaster
+import { WishlistProvider } from "./context/WishlistContext";
+import { Toaster } from "react-hot-toast"; 
 import { ClientNavigation } from "@/components/layouts/ClientNavigation"; 
-import "./globals.css"
+import "./globals.css";
 
 const manrope = Manrope({ 
     subsets: ["latin"],

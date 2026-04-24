@@ -45,6 +45,7 @@ model User {
 enum Role {
   BUYER
   SELLER
+  ADMIN
 }
 
 model VerificationToken {
@@ -69,9 +70,10 @@ model PasswordResetToken {
 model Listing {
   id             String            @id @default(cuid())
   name           String
+  slug           String            @unique
   price          Float
   images         Image[]
-  description    String
+  description    String           @db.Text
   location       String?
   state          String?
   status         ProductStatus     @default(AVAILABLE)
@@ -133,6 +135,7 @@ model Review {
 model Category {
   id        String    @id @default(cuid())
   name      String    @unique
+  slug      String    @unique
   image     String?
   publicId  String?
   listings  Listing[]
@@ -343,4 +346,13 @@ enum PaymentProvider {
   FLUTTERWAVE
   STRIPE
   MANUAL
+}
+
+model idempotencyKey{
+  id        String   @id @default(cuid())
+  key       String   @unique
+  status    String   @default("PENDING")
+  response  Json?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }

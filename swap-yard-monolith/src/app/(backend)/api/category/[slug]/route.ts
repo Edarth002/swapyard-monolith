@@ -1,11 +1,13 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import type { Prisma } from "@prisma/client";
 import { verifyToken } from "@/lib/token";
 import {
   uploadOneImageFile,
   deleteImageByPublicId,
 } from "@/app/(backend)/utils/cloudinary";
 import { updateCategorySchema } from "../schema";
+import { createCategorySlug } from "@/lib/slugGenerator";
 
 export const runtime = "nodejs";
 
@@ -42,12 +44,12 @@ async function getSeller(req: Request) {
 
 export async function GET(
   _req: Request,
-  ctx: { params: Promise<{ id: string }> }
+  ctx: { params: Promise<{ slug: string }> }
 ) {
-  const { id } = await ctx.params;
+  const { slug } = await ctx.params;
 
   const category = await prisma.category.findUnique({
-    where: { id },
+    where: { slug },
     include: {
       listings: {
         include: {
@@ -66,7 +68,7 @@ export async function GET(
 
 export async function PATCH(
   req: Request,
-  ctx: { params: Promise<{ id: string }> }
+  ctx: { params: Promise<{ slug: string }> }
 ) {
   let uploadedImage: any = null;
 
@@ -77,10 +79,10 @@ export async function PATCH(
       return NextResponse.json({ message: "Unauthorized" }, { status: 401 });
     }
 
-    const { id } = await ctx.params;
+    const { slug } = await ctx.params;
 
     const existing = await prisma.category.findUnique({
-      where: { id },
+      where: { slug },
     });
 
     if (!existing) {
@@ -108,27 +110,48 @@ export async function PATCH(
       );
     }
 
-    // ---------- IMAGE ----------
+    const { name } = parsed.data;
+
+    const data: Prisma.CategoryUpdateInput = {};
+
+    if (name !== undefined && name !== existing.name) {
+      data.name = name;
+
+      const baseSlug = createCategorySlug(name);
+      let newSlug = baseSlug;
+
+      let existingSlug = await prisma.category.findUnique({
+        where: { slug: newSlug },
+      });
+
+      let counter = 1;
+      while (existingSlug && existingSlug.id !== existing.id) {
+        newSlug = `${baseSlug}-${counter}`;
+        existingSlug = await prisma.category.findUnique({
+          where: { slug: newSlug },
+        });
+        counter++;
+      }
+
+      data.slug = newSlug;
+    }
+
     const file = formData.get("image");
 
     if (file instanceof File && file.size > 0) {
       uploadedImage = await uploadOneImageFile(file, {
         subfolder: "categories",
       });
+
+      data.image = uploadedImage.url;
+      data.publicId = uploadedImage.public_id;
     }
 
     const updated = await prisma.category.update({
-      where: { id },
-      data: {
-        ...(parsed.data.name !== undefined && { name: parsed.data.name }),
-        ...(uploadedImage && {
-          image: uploadedImage.url,
-          publicId: uploadedImage.public_id,
-        }),
-      },
+      where: { id: existing.id },
+      data,
     });
 
-    // delete old image if replaced
     if (uploadedImage && existing.publicId) {
       await deleteImageByPublicId(existing.publicId);
     }
@@ -139,14 +162,20 @@ export async function PATCH(
     );
   } catch (err) {
     console.error(err);
+
+    if (uploadedImage?.public_id) {
+      try {
+        await deleteImageByPublicId(uploadedImage.public_id);
+      } catch {}
+    }
+
     return NextResponse.json({ message: "Server error" }, { status: 500 });
   }
 }
 
-// ---------- DELETE ----------
 export async function DELETE(
   req: Request,
-  ctx: { params: Promise<{ id: string }> }
+  ctx: { params: Promise<{ slug: string }> }
 ) {
   const seller = await getSeller(req);
 
@@ -154,10 +183,10 @@ export async function DELETE(
     return NextResponse.json({ message: "Unauthorized" }, { status: 401 });
   }
 
-  const { id } = await ctx.params;
+  const { slug } = await ctx.params;
 
   const existing = await prisma.category.findUnique({
-    where: { id },
+    where: { slug },
   });
 
   if (!existing) {
@@ -165,7 +194,7 @@ export async function DELETE(
   }
 
   await prisma.category.delete({
-    where: { id },
+    where: { id: existing.id },
   });
 
   if (existing.publicId) {

@@ -1,8 +1,9 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { verifyToken } from "@/lib/token";
-import { uploadOneImageFile } from "@/app/(backend)/utils/cloudinary";
+import { uploadOneImageFile, deleteImageByPublicId } from "@/app/(backend)/utils/cloudinary";
 import { createCategorySchema } from "./schema";
+import { createCategorySlug } from "@/lib/slugGenerator";
 
 export const runtime = "nodejs";
 
@@ -39,75 +40,96 @@ async function getSeller(req: Request) {
 
 export async function POST(req: Request) {
   let uploadedImage: any = null;
+  const idempotencyKey = req.headers.get("idempotency-key");
+  
+  if (!idempotencyKey) {
+    return NextResponse.json({ message: "Idempotency-Key header is required" }, { status: 400 });
+  }
 
   try {
     const seller = await getSeller(req);
+    if (!seller) return NextResponse.json({ message: "Unauthorized" }, { status: 401 });
 
-    if (!seller) {
-      return NextResponse.json({ message: "Unauthorized" }, { status: 401 });
+    const existingEntry = await prisma.idempotencyKey.findUnique({
+      where: { key: idempotencyKey },
+    });
+
+    if (existingEntry?.status === "COMPLETED") {
+      return NextResponse.json(existingEntry.response, { status: 200 });
+    }
+
+    if (existingEntry?.status === "PENDING") {
+      const twoMinutesAgo = new Date(Date.now() - 2 * 60000);
+      if (existingEntry.updatedAt > twoMinutesAgo) {
+        return NextResponse.json({ message: "Request is already being processed" }, { status: 409 });
+      }
     }
 
     const formData = await req.formData();
-
-    const rawInput = {
-      name: String(formData.get("name") || "").trim(),
-    };
-
+    const rawInput = { name: String(formData.get("name") || "").trim() };
     const parsed = createCategorySchema.safeParse(rawInput);
 
     if (!parsed.success) {
-      return NextResponse.json(
-        {
-          message: "Invalid input",
-          errors: parsed.error.flatten().fieldErrors,
-        },
-        { status: 400 }
-      );
+      return NextResponse.json({
+        message: "Invalid input",
+        errors: parsed.error.flatten().fieldErrors,
+      }, { status: 400 });
+    }
+
+    const { name } = parsed.data;
+
+    let slug = createCategorySlug(name);
+    let existing = await prisma.category.findUnique({ where: { slug } });
+    let counter = 1;
+    while (existing) {
+      slug = `${createCategorySlug(name)}`;
+      existing = await prisma.category.findUnique({ where: { slug } });
+      counter++;
     }
 
     const file = formData.get("image");
-
     if (file instanceof File && file.size > 0) {
-      uploadedImage = await uploadOneImageFile(file, {
-        subfolder: "categories",
-      });
+      uploadedImage = await uploadOneImageFile(file, { subfolder: "categories" });
     }
 
-    const category = await prisma.category.create({
-      data: {
-        name: parsed.data.name,
-        image: uploadedImage?.url || null,
-        publicId: uploadedImage?.public_id || null,
-      },
-    });
+    const categoryItem = await prisma.$transaction(async (tx) => {
+      await tx.idempotencyKey.upsert({
+        where: { key: idempotencyKey },
+        update: { status: "PENDING" },
+        create: { key: idempotencyKey, status: "PENDING" },
+      });
 
-    return NextResponse.json(
-      { message: "Category created", category },
-      { status: 201 }
-    );
-  } catch (err: any) {
-    console.error(err);
-
-    return NextResponse.json({ message: "Server error" }, { status: 500 });
-  }
-}
-
-export async function GET() {
-  try {
-    const categories = await prisma.category.findMany({
-      include: {
-        listings: {
-          include: {
-            images: true,
-          },
+      const category = await tx.category.create({
+        data: {
+          name,
+          slug,
+          image: uploadedImage?.url || null,
+          publicId: uploadedImage?.public_id || null,
         },
-      },
-      orderBy: { createdAt: "desc" },
-    });
+      });
 
-    return NextResponse.json({ categories }, { status: 200 });
-  } catch (err) {
-    console.error(err);
-    return NextResponse.json({ message: "Server error" }, { status: 500 });
+      const responseData = { message: "Category created", category };
+
+      await tx.idempotencyKey.update({
+        where: { key: idempotencyKey },
+        data: {
+          status: "COMPLETED",
+          response: responseData as any,
+        },
+      });
+
+      return responseData;
+    }, { timeout: 10000 });
+
+    return NextResponse.json(categoryItem, { status: 201 });
+
+  } catch (err: any) {
+    console.error("CATEGORY ERROR:", err);
+
+    if (uploadedImage?.public_id) {
+      await deleteImageByPublicId(uploadedImage.public_id).catch(console.error);
+    }
+
+    return NextResponse.json({ message: err.message || "Server error" }, { status: 500 });
   }
 }
