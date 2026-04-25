@@ -12,10 +12,12 @@ import {
   User
 } from "lucide-react";
 import { useBuyerAccount } from "@/hooks/buyer/useBuyerAccount";
+import { useRouter } from "next/navigation";
 import Link from "next/link";
 
 export default function BuyerAccount() {
 const { state, setters, refs, handlers } = useBuyerAccount();
+const router = useRouter();
 
 if (state.isLoading) {
 return (
