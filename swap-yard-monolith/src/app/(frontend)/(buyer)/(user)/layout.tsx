@@ -61,7 +61,7 @@ export default function UserDashboardLayout({
             </aside>
 
             {/* MAIN CONTENT AREA */}
-            <main className="">
+            <main className="w-full">
                 {children}
             </main>
             

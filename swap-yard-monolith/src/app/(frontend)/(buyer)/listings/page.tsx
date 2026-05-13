@@ -12,7 +12,6 @@ import Image from "next/image";
 import Link from "next/link";
 import { ListingsMap } from "@/components/buyer/listings/ListingMap";
 
-// MATCHES SCREENSHOT: Mobile horizontal list under the map
 const HorizontalListingCard = ({ item }: { item: any }) => {
   const formattedPrice = new Intl.NumberFormat("en-NG", {
     style: "currency",

@@ -134,9 +134,8 @@ export const Navbar = ({ onOpenSidebar }: NavbarProps) => {
                 {/* Center Links (Desktop Only) */}
                 <div className="hidden lg:flex gap-8 items-center text-sm font-semibold">
                     <Link href="/listings" className="text-[#EB3B18] transition-colors cursor-pointer">Browse</Link>
-                    <Link href="/seller" className="hover:text-[#EB3B18] transition-colors cursor-pointer">Sell Items</Link>
-                    <Link href="/getting-started" className="hover:text-[#EB3B18] transition-colors cursor-pointer">Getting Started</Link>
-                    <Link href="/categories" className="hover:text-[#EB3B18] transition-colors cursor-pointer">Categories</Link>
+                    <Link href="/orders" className="hover:text-[#EB3B18] transition-colors cursor-pointer">Orders</Link>
+                    <Link href="/wishlist" className="hover:text-[#EB3B18] transition-colors cursor-pointer">Wishlist</Link>
                 </div>
 
                 {/* Right Side Controls */}
@@ -331,7 +330,7 @@ export const Navbar = ({ onOpenSidebar }: NavbarProps) => {
                         
                         {/* Start Selling Button */}
                         <Link
-                            href="/seller/dashboard"
+                            href="/seller/account"
                             className="hidden md:block px-4 py-2 bg-[#EB3B18] text-white rounded-md text-sm font-bold hover:bg-[#bf360c] transition-colors shadow-sm ml-2 cursor-pointer"
                         >
                             Start Selling
@@ -377,13 +376,13 @@ export const Navbar = ({ onOpenSidebar }: NavbarProps) => {
                                     >
                                         <Package className="w-4 h-4 text-gray-600" /> Orders
                                     </Link>
-                                    <Link 
+                                    {/* <Link 
                                         href="/inbox" 
                                         onClick={() => setIsAvatarOpen(false)}
                                         className="flex items-center gap-3 px-4 py-3 text-gray-700 hover:bg-gray-50 transition-colors text-sm"
                                     >
                                         <Mail className="w-4 h-4 text-gray-600" /> Inbox
-                                    </Link>
+                                    </Link> */}
                                     <Link 
                                         href="/wishlist" 
                                         onClick={() => setIsAvatarOpen(false)}
@@ -391,13 +390,13 @@ export const Navbar = ({ onOpenSidebar }: NavbarProps) => {
                                     >
                                         <Heart className="w-4 h-4 text-gray-600" /> Wishlist
                                     </Link>
-                                    <Link 
+                                    {/* <Link 
                                         href="/vouchers" 
                                         onClick={() => setIsAvatarOpen(false)}
                                         className="flex items-center gap-3 px-4 py-3 text-gray-700 hover:bg-gray-50 border-b border-gray-50 transition-colors text-sm"
                                     >
                                         <Ticket className="w-4 h-4 text-gray-600" /> Voucher
-                                    </Link>
+                                    </Link> */}
                                     <button 
                                         onClick={() => setIsAvatarOpen(false)}
                                         className="w-full text-center px-4 py-3.5 text-[#EB3B18] font-bold hover:bg-gray-50 transition-colors text-sm cursor-pointer"
