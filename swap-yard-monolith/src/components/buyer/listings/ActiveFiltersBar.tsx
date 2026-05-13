@@ -1,17 +1,15 @@
 import React from "react";
 import { X } from "lucide-react";
 
-// 1. Update the interface to include the optional 'value' string
 interface FilterBadge {
   key: string;
-  value?: string; // Added this
+  value?: string;
   label: string;
 }
 
-// 2. Update onRemove to expect the second argument
 interface ActiveFiltersBarProps {
   activeFilters: FilterBadge[];
-  onRemove: (key: string, value?: string) => void; // Updated this
+  onRemove: (key: string, value?: string) => void; 
   onClearAll: () => void;
 }
 
@@ -31,7 +29,6 @@ export default function ActiveFiltersBar({
         >
           {filter.label}
           <button
-            // 3. Pass both arguments back up to page.tsx
             onClick={() => onRemove(filter.key, filter.value)}
             aria-label="Remove filter"
             className="hover:text-[#EB3B18] transition-colors cursor-pointer"

@@ -318,7 +318,7 @@ export default function BuyerAccount() {
 
                 <button
                   onClick={() =>
-                    router.push("/onboarding/reset-password")
+                    router.push("/forgot-password")
                   }
                   className="cursor-pointer rounded-lg border px-4 py-2 text-sm hover:bg-slate-50"
                 >
@@ -352,7 +352,7 @@ export default function BuyerAccount() {
 
                 <button
                   onClick={() =>
-                    router.push("/onboarding/reset-password")
+                    router.push("/forgot-password")
                   }
                   className="w-full cursor-pointer rounded-xl bg-[#002147] py-3 font-medium text-white transition hover:bg-[#001733]"
                 >

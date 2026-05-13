@@ -13,25 +13,20 @@ export default function FilterSidebar({ currentFilters, onFilterChange }: Filter
   const categories = ["All Items", "Furniture", "Kitchen & Dining", "Office", "Bedroom", "Decor", "Baby & Kids", "Outdoor"];
   const conditions = ["New", "Barely Used", "Used", "Needs Repair"];
 
-  // Local state for prices to prevent re-rendering on every keystroke
   const [minPrice, setMinPrice] = useState(currentFilters.get("minPrice") || "");
   const [maxPrice, setMaxPrice] = useState(currentFilters.get("maxPrice") || "");
 
-  // Sync local state if the URL changes externally (e.g., clearing filters from the top bar)
   useEffect(() => {
     setMinPrice(currentFilters.get("minPrice") || "");
     setMaxPrice(currentFilters.get("maxPrice") || "");
   }, [currentFilters]);
 
-  // Helper to check if a checkbox should be checked
   const isChecked = (key: string, value: string) => {
     const params = currentFilters.getAll(key);
-    return params.includes(value); // Ensure exact string match with backend
+    return params.includes(value); 
   };
 
-  // Helper to handle checkbox clicks
   const handleCheck = (key: string, value: string) => {
-    // If "All Items" is clicked, clear the category filter completely
     if (key === "category" && value === "All Items") {
       onFilterChange("category", "", false);
       return;
@@ -40,7 +35,6 @@ export default function FilterSidebar({ currentFilters, onFilterChange }: Filter
     onFilterChange(key, value, true);
   };
 
-  // Helper to submit price
   const handlePriceSubmit = (key: string, value: string) => {
     onFilterChange(key, value, false);
   };
@@ -49,7 +43,6 @@ export default function FilterSidebar({ currentFilters, onFilterChange }: Filter
     <aside className="w-full lg:w-64 flex-shrink-0 space-y-8">
       <h2 className="text-lg font-bold text-gray-900">Filter Options</h2>
 
-      {/* Categories */}
       <div>
         <div className="flex justify-between items-center mb-4">
           <h3 className="font-semibold text-gray-900">Categories</h3>
@@ -68,7 +61,6 @@ export default function FilterSidebar({ currentFilters, onFilterChange }: Filter
             <label key={cat} className="flex items-center gap-3 cursor-pointer group">
               <input
                 type="checkbox"
-                // "All Items" is checked if there are no specific categories in the URL
                 checked={cat === "All Items" ? !currentFilters.has("category") : isChecked("category", cat)}
                 onChange={() => handleCheck("category", cat)}
                 className="w-4 h-4 rounded border-gray-300 text-[#EB3B18] focus:ring-[#EB3B18]"
@@ -81,7 +73,6 @@ export default function FilterSidebar({ currentFilters, onFilterChange }: Filter
 
       <hr className="border-gray-100" />
 
-      {/* Item Conditions */}
       <div>
         <div className="flex justify-between items-center mb-4">
           <h3 className="font-semibold text-gray-900">Item Conditions</h3>
@@ -104,7 +95,6 @@ export default function FilterSidebar({ currentFilters, onFilterChange }: Filter
 
       <hr className="border-gray-100" />
 
-      {/* Price Range */}
       <div>
         <h3 className="font-semibold text-gray-900 mb-4">Price Range</h3>
         <div className="flex items-center gap-2">
@@ -138,7 +128,6 @@ export default function FilterSidebar({ currentFilters, onFilterChange }: Filter
 
       <hr className="border-gray-100" />
 
-      {/* SwapYard Guarantee Box */}
       <div className="bg-blue-50/50 border border-blue-100 rounded-xl p-4">
         <div className="flex items-center gap-2 mb-2">
           <ShieldCheck className="w-5 h-5 text-blue-600" />

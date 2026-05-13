@@ -87,10 +87,9 @@ export default function ListingCard({
     }
   };
 
-  // Handle Favorite/Wishlist logic
   const handleFavorite = (e: React.MouseEvent) => {
     e.preventDefault();
-    e.stopPropagation(); // Prevents the link from triggering when clicking the heart
+    e.stopPropagation();
     
     if (isWishlisted) {
       removeFromWishlist(id);
@@ -112,7 +111,6 @@ export default function ListingCard({
   return (
     <div className="group flex flex-col bg-white rounded-xl overflow-hidden hover:shadow-lg transition-shadow duration-300 border border-gray-100 relative">
       
-      {/* Image Container with Badges - Wrapped in Link */}
       <Link href={`/listings/${id}`} className="relative aspect-square w-full bg-gray-100 overflow-hidden block cursor-pointer z-0">
         <Image
           src={imageUrl}
