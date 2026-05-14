@@ -23,8 +23,7 @@ export const Navbar = ({ onOpenSidebar }: NavbarProps) => {
     const pathname = usePathname();
     const isLandingPage = pathname === "/";
     const [isScrolled, setIsScrolled] = useState(false);
-    
-    // Dropdown States & Refs
+
     const [isCartOpen, setIsCartOpen] = useState(false); 
     const [isAvatarOpen, setIsAvatarOpen] = useState(false); 
     const [isNotificationOpen, setIsNotificationOpen] = useState(false); 
@@ -36,11 +35,9 @@ export const Navbar = ({ onOpenSidebar }: NavbarProps) => {
     const [user, setUser] = useState<UserData | null>(null);
     const [authChecked, setAuthChecked] = useState(false);
 
-    // --- Access Global States ---
     const { cartItems, cartCount, cartTotal, removeFromCart, updateQuantity } = useCart();
     const { notifications, unreadCount, markAsRead, markAllAsRead } = useNotification();
 
-    // --- Authentication Check ---
     useEffect(() => {
         const checkAuth = async () => {
             try {
@@ -61,14 +58,13 @@ export const Navbar = ({ onOpenSidebar }: NavbarProps) => {
         checkAuth();
     }, []);
 
-    // --- Scroll Listener ---
+
     useEffect(() => {
         const handleScroll = () => setIsScrolled(window.scrollY > 50);
         window.addEventListener("scroll", handleScroll);
         return () => window.removeEventListener("scroll", handleScroll);
     }, []);
 
-    // --- Click Outside to Close Dropdowns ---
     useEffect(() => {
         const handleClickOutside = (event: MouseEvent) => {
             if (cartRef.current && !cartRef.current.contains(event.target as Node)) {
@@ -123,7 +119,6 @@ export const Navbar = ({ onOpenSidebar }: NavbarProps) => {
         >
             <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex justify-between items-center">
                 
-                {/* Left Side: Mobile Menu & Logo */}
                 <div className="flex items-center gap-4">
                     <button className="md:hidden text-inherit cursor-pointer" onClick={onOpenSidebar} aria-label="Open main menu">
                         <Menu className="w-6 h-6" />
@@ -131,14 +126,14 @@ export const Navbar = ({ onOpenSidebar }: NavbarProps) => {
                     <Logo forceBlackTheme={!isTransparent} />
                 </div>
 
-                {/* Center Links (Desktop Only) */}
                 <div className="hidden lg:flex gap-8 items-center text-sm font-semibold">
-                    <Link href="/listings" className="text-[#EB3B18] transition-colors cursor-pointer">Browse</Link>
-                    <Link href="/orders" className="hover:text-[#EB3B18] transition-colors cursor-pointer">Orders</Link>
+                    <Link href="/listings" className="hover:text-[#EB3B18] transition-colors cursor-pointer">Browse</Link>
+                    { isAuth && (
+                        <Link href="/orders" className="hover:text-[#EB3B18] transition-colors cursor-pointer">Orders</Link>
+                    )}
                     <Link href="/wishlist" className="hover:text-[#EB3B18] transition-colors cursor-pointer">Wishlist</Link>
                 </div>
 
-                {/* Right Side Controls */}
                 {!authChecked ? (
                     <div className="flex gap-3 opacity-70">
                         <span className="px-4 py-2">…</span>
@@ -146,7 +141,6 @@ export const Navbar = ({ onOpenSidebar }: NavbarProps) => {
                 ) : isAuth ? (
                     <div className="flex items-center gap-4 md:gap-5 relative">
                         
-                        {/* Cart Dropdown Wrapper */}
                         <div className="relative" ref={cartRef}>
                             <button 
                                 onClick={() => {
@@ -165,7 +159,6 @@ export const Navbar = ({ onOpenSidebar }: NavbarProps) => {
                                 )}
                             </button>
 
-                            {/* Cart Dropdown Menu */}
                             {isCartOpen && (
                                 <div className={`absolute right-0 sm:-right-10 md:right-0 top-full mt-4 z-50 animate-in fade-in zoom-in-95 duration-200`}>
                                     <div className={`${cartItems.length === 0 ? "w-64" : "w-[340px] md:w-[400px]"} bg-white rounded-2xl shadow-xl border border-gray-100 flex flex-col overflow-hidden text-left`}>
@@ -250,7 +243,6 @@ export const Navbar = ({ onOpenSidebar }: NavbarProps) => {
                             )}
                         </div>
 
-                        {/* Notification Dropdown Wrapper */}
                         <div className="" ref={notificationRef}>
                             <button 
                                 onClick={() => {
@@ -328,7 +320,6 @@ export const Navbar = ({ onOpenSidebar }: NavbarProps) => {
                             )}
                         </div>
                         
-                        {/* Start Selling Button */}
                         <Link
                             href="/seller/account"
                             className="hidden md:block px-4 py-2 bg-[#EB3B18] text-white rounded-md text-sm font-bold hover:bg-[#bf360c] transition-colors shadow-sm ml-2 cursor-pointer"
@@ -336,7 +327,6 @@ export const Navbar = ({ onOpenSidebar }: NavbarProps) => {
                             Start Selling
                         </Link>
 
-                        {/* User Avatar Dropdown Wrapper */}
                         <div className="relative ml-1 md:ml-2" ref={avatarRef}>
                             <button 
                                 onClick={() => {
@@ -376,13 +366,6 @@ export const Navbar = ({ onOpenSidebar }: NavbarProps) => {
                                     >
                                         <Package className="w-4 h-4 text-gray-600" /> Orders
                                     </Link>
-                                    {/* <Link 
-                                        href="/inbox" 
-                                        onClick={() => setIsAvatarOpen(false)}
-                                        className="flex items-center gap-3 px-4 py-3 text-gray-700 hover:bg-gray-50 transition-colors text-sm"
-                                    >
-                                        <Mail className="w-4 h-4 text-gray-600" /> Inbox
-                                    </Link> */}
                                     <Link 
                                         href="/wishlist" 
                                         onClick={() => setIsAvatarOpen(false)}
@@ -390,13 +373,6 @@ export const Navbar = ({ onOpenSidebar }: NavbarProps) => {
                                     >
                                         <Heart className="w-4 h-4 text-gray-600" /> Wishlist
                                     </Link>
-                                    {/* <Link 
-                                        href="/vouchers" 
-                                        onClick={() => setIsAvatarOpen(false)}
-                                        className="flex items-center gap-3 px-4 py-3 text-gray-700 hover:bg-gray-50 border-b border-gray-50 transition-colors text-sm"
-                                    >
-                                        <Ticket className="w-4 h-4 text-gray-600" /> Voucher
-                                    </Link> */}
                                     <button 
                                         onClick={() => setIsAvatarOpen(false)}
                                         className="w-full text-center px-4 py-3.5 text-[#EB3B18] font-bold hover:bg-gray-50 transition-colors text-sm cursor-pointer"
