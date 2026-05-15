@@ -17,7 +17,6 @@ export const Footer = () => {
                     <div className="flex flex-col space-y-4 text-sm text-gray-300 pt-1 lg:col-span-1">
                         <Link href="/listings" className="hover:text-white transition-colors">Browse Listings</Link>
                         <Link href="/auth/signup" className="hover:text-white transition-colors">Sell an item</Link>
-                        <Link href="/categories" className="hover:text-white transition-colors">Popular Categories</Link>
                     </div>
 
                     <div className="lg:col-span-1">
@@ -32,7 +31,7 @@ export const Footer = () => {
                         <h4 className="font-bold mb-4 md:mb-6 text-white text-base md:text-lg">Help</h4>
                         <ul className="space-y-4 text-sm text-gray-300">
                             <li><Link href="/faq" className="hover:text-white transition-colors">FAQ</Link></li>
-                            <li><Link href="/contact" className="hover:text-white transition-colors">Contact Us</Link></li>
+                            <li><Link href="/faq" className="hover:text-white transition-colors">Contact Us</Link></li>
                         </ul>
                     </div>
 
