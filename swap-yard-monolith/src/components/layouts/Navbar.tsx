@@ -128,6 +128,7 @@ export const Navbar = ({ onOpenSidebar }: NavbarProps) => {
 
                 <div className="hidden lg:flex gap-8 items-center text-sm font-semibold">
                     <Link href="/listings" className="hover:text-[#EB3B18] transition-colors cursor-pointer">Browse</Link>
+                    <Link href="/about" className="hover:text-[#EB3B18] transition-colors cursor-pointer">About Us</Link>
                     { isAuth && (
                         <Link href="/orders" className="hover:text-[#EB3B18] transition-colors cursor-pointer">Orders</Link>
                     )}
