@@ -6,7 +6,7 @@ import {
 } from "@/app/(backend)/utils/cloudinary";
 import { prisma } from "@/lib/prisma";
 import { verifyToken } from "@/lib/token";
-import { updateListingSchema } from "../schema";
+import { updateListingSchema } from "../../../listing/schema";
 import { createSlug } from "@/lib/slugGenerator";
 
 export const runtime = "nodejs";
