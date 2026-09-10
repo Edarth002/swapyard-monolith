@@ -134,7 +134,6 @@ export async function PATCH(
     if ("error" in auth) return auth.error;
     const { user } = auth;
 
-    //Here you first locate listing by slug to get its ID and current images, then you perform the update using the ID. This way you can handle slug changes and image replacements correctly without losing track of the listing.
     const existing = await prisma.listing.findUnique({
       where: { slug },
       include: { images: true },
@@ -321,7 +320,6 @@ export async function PATCH(
   } catch (err) {
     console.error("Error updating listing:", err);
 
-    //rollback newly uploaded images on cloudinary if something goes wrong during upload (Principle: Atomicity)
 
     if (newlyUploaded.length) {
       const ids = newlyUploaded.map((img) => img.public_id).filter(Boolean);
@@ -357,6 +355,10 @@ export async function DELETE(
 
     if (existing.sellerId !== user.id) {
       return NextResponse.json({ message: "Forbidden" }, { status: 403 });
+    }
+
+    if(existing.status === "SOLD") {
+      return NextResponse.json({ message: "Cannot delete a sold listing" }, { status: 400 });
     }
 
     await prisma.listing.delete({
