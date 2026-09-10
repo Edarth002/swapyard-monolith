@@ -373,7 +373,6 @@ export async function DELETE(
       await deleteManyByPublicIds(publicIds);
     }
 
-
     return NextResponse.json(
       { message: "Listing deleted successfully" },
       { status: 200 }

@@ -44,6 +44,7 @@ model User {
   
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
 }
 
 enum Role {
@@ -99,6 +100,20 @@ model Listing {
 
   createdAt      DateTime          @default(now())
   updatedAt      DateTime          @updatedAt
+
+  SlugHistory    ListingSlugHistory[] 
+
+}
+
+model ListingSlugHistory {
+  id        String   @id @default(cuid())
+  slug      String
+  listingId String
+  listing   Listing @relation(fields: [listingId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@index([slug])
+  @@index([listingId])
 }
 
 model Image {
@@ -107,6 +122,8 @@ model Image {
   publicId  String?
   listingId String
   listing   Listing @relation(fields: [listingId], references: [id], onDelete: Cascade)
+
+  @@index([listingId])
 }
 
 enum ProductStatus {
@@ -136,6 +153,8 @@ model Review {
   createdAt DateTime @default(now())
 
   @@unique([buyerId, sellerId])
+
+  @@index([sellerId])
 }
 
 model Category {
@@ -147,6 +166,8 @@ model Category {
   listings  Listing[]
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
+
+  @@index([name])
 }
 
 model Cart {
@@ -156,6 +177,7 @@ model Cart {
   items     CartItem[]
   createdAt DateTime   @default(now())
   updatedAt DateTime   @updatedAt
+
 }
 
 model CartItem {
@@ -171,6 +193,7 @@ model CartItem {
   createdAt DateTime @default(now())
 
   @@unique([cartId, listingId])
+  @@index([listingId])
 }
 
 model SellerAccount {
@@ -187,6 +210,7 @@ model SellerAccount {
 
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
+
 }
 
 model Order {
@@ -206,8 +230,8 @@ model Order {
   items               OrderItem[]
   payouts             Payout[]
 
-  pickupLocation String?
-pickupNote     String?
+  pickupLocation      String?
+  pickupNote          String?
 
   sellerNotifiedAt    DateTime?
   buyerConfirmedAt    DateTime?
@@ -217,6 +241,8 @@ pickupNote     String?
 
   createdAt           DateTime      @default(now())
   updatedAt           DateTime      @updatedAt
+
+  @@index([buyerId])
 }
 
 model OrderItem {
@@ -236,6 +262,10 @@ model OrderItem {
   quantity      Int      @default(1)
 
   createdAt     DateTime @default(now())
+
+  @@index([orderId])
+  @@index([listingId])
+  @@index([sellerId])
 }
 
 model Payment {
@@ -256,6 +286,9 @@ model Payment {
   paidAt        DateTime?
   createdAt     DateTime        @default(now())
   updatedAt     DateTime        @updatedAt
+
+
+  @@index([buyerId])
 }
 
 model Payout {
@@ -380,6 +413,9 @@ model Report {
   status      ReportStatus @default(OPEN)
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
+
+  @@index([reporterId])
+  @@index([listingId])
 }
 
 enum ReportStatus {
@@ -398,4 +434,6 @@ model notification {
   read      Boolean  @default(false)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  @@index([userId])
 }
