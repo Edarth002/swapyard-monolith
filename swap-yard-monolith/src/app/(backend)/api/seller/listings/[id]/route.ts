@@ -208,7 +208,25 @@ export async function PATCH(
     if (contact !== undefined) data.contact = contact;
 
     if (name !== undefined && name !== existing.name) {
-      data.slug = createSlug(name);
+      const baseSlug = createSlug(name);
+      let newSlug = baseSlug;
+
+      const slugTaken = async (candidate: string) => {
+        const [liveMatch, historyMatch] = await Promise.all([
+          prisma.listing.findUnique({ where: { slug: candidate } }),
+          prisma.listingSlugHistory.findFirst({ where: { slug: candidate } }),
+        ]);
+        const liveConflict = liveMatch && liveMatch.id !== existing.id;
+        return Boolean(liveConflict || historyMatch);
+      };
+
+      let counter = 1;
+      while (await slugTaken(newSlug)) {
+        newSlug = `${baseSlug}-${counter}`;
+        counter++;
+      }
+
+      data.slug = newSlug;
       data.SlugHistory = {
         create: {
           slug: existing.slug,
@@ -330,38 +348,23 @@ export async function DELETE(
         id,
         sellerId: user.id,
       },
-      include: { images: true },
     });
 
     if (!existing) {
       return NextResponse.json({ message: "Listing not found" }, { status: 404 });
     }
 
-    if (existing.status === "SOLD") {
-      return NextResponse.json(
-        { message: "Cannot delete a sold listing" },
-        { status: 400 }
-      );
-    }
-
-    await prisma.listing.delete({
+    const listing = await prisma.listing.update({
       where: { id: existing.id },
+      data: { status: "REMOVED" },
     });
 
-    const publicIds = existing.images
-      .map((img) => img.publicId)
-      .filter((publicId): publicId is string => Boolean(publicId));
-
-    if (publicIds.length) {
-      await deleteManyByPublicIds(publicIds);
-    }
-
     return NextResponse.json(
-      { message: "Listing deleted successfully" },
+      { message: "Listing removed successfully", listing },
       { status: 200 }
     );
   } catch (err) {
-    console.error("Error deleting listing:", err);
+    console.error("Error removing listing:", err);
     return NextResponse.json({ message: "Server error" }, { status: 500 });
   }
 }
