@@ -166,8 +166,20 @@ model Category {
   listings  Listing[]
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
+  CategorySlugHistory CategorySlugHistory[]
 
   @@index([name])
+}
+
+model CategorySlugHistory {
+  id         String   @id @default(cuid())
+  slug       String
+  categoryId String
+  category   Category @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  createdAt  DateTime @default(now())
+
+  @@index([slug])
+  @@index([categoryId])
 }
 
 model Cart {
