@@ -96,16 +96,18 @@ export async function PATCH(
       const baseSlug = createCategorySlug(name);
       let newSlug = baseSlug;
 
-      let existingSlug = await prisma.category.findUnique({
-        where: { slug: newSlug },
-      });
+      const slugTaken = async (candidate: string) => {
+        const [liveMatch, historyMatch] = await Promise.all([
+          prisma.category.findUnique({ where: { slug: candidate } }),
+          prisma.categorySlugHistory.findFirst({ where: { slug: candidate } }),
+        ]);
+        const liveConflict = liveMatch && liveMatch.id !== existing.id;
+        return Boolean(liveConflict || historyMatch);
+      };
 
       let counter = 1;
-      while (existingSlug && existingSlug.id !== existing.id) {
+      while (await slugTaken(newSlug)) {
         newSlug = `${baseSlug}-${counter}`;
-        existingSlug = await prisma.category.findUnique({
-          where: { slug: newSlug },
-        });
         counter++;
       }
 
@@ -123,9 +125,22 @@ export async function PATCH(
       data.publicId = uploadedImage.public_id;
     }
 
-    const updated = await prisma.category.update({
-      where: { id: existing.id },
-      data,
+    const updated = await prisma.$transaction(async (tx) => {
+      const category = await tx.category.update({
+        where: { id: existing.id },
+        data,
+      });
+
+      if (data.slug && data.slug !== existing.slug) {
+        await tx.categorySlugHistory.create({
+          data: {
+            slug: existing.slug,
+            categoryId: existing.id,
+          },
+        });
+      }
+
+      return category;
     });
 
     if (uploadedImage && existing.publicId) {
@@ -147,35 +162,4 @@ export async function PATCH(
 
     return NextResponse.json({ message: "Server error" }, { status: 500 });
   }
-}
-
-export async function DELETE(
-  req: Request,
-  ctx: { params: Promise<{ id: string }> }
-) {
-  const admin = await getAdmin(req);
-
-  if (!admin) {
-    return NextResponse.json({ message: "Unauthorized" }, { status: 401 });
-  }
-
-  const { id } = await ctx.params;
-
-  const existing = await prisma.category.findUnique({
-    where: { id },
-  });
-
-  if (!existing) {
-    return NextResponse.json({ message: "Not found" }, { status: 404 });
-  }
-
-  await prisma.category.delete({
-    where: { id: existing.id },
-  });
-
-  if (existing.publicId) {
-    await deleteImageByPublicId(existing.publicId);
-  }
-
-  return NextResponse.json({ message: "Deleted" });
 }
