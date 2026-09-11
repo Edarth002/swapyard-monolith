@@ -129,6 +129,7 @@ model Image {
 enum ProductStatus {
   SOLD
   AVAILABLE
+  REMOVED
 }
 
 enum ProductCondition {
