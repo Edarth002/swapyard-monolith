@@ -52,33 +52,39 @@ export default function ProductDetailsPage() {
       minimumFractionDigits: 0,
     }).format(price);
 
-useEffect(() => {
-  if (!slug) return;
+  useEffect(() => {
+    if (!slug) return;
 
-  let cancelled = false;
+    let cancelled = false;
 
-  const fetchProduct = async () => {
-    setIsLoading(true);
-    setError("");
-    try {
-      const res = await fetch(`/api/listing/${slug}`);
-      const data = await res.json();
-      if (cancelled) return;
-      if (data.ok) {
-        setProduct(data.listing);
-      } else {
-        setError(data.message || "Failed to load product details.");
+    const fetchProduct = async () => {
+      setIsLoading(true);
+      setError("");
+      try {
+        const res = await fetch(`/api/listing/${slug}`);
+        const data = await res.json();
+        if (cancelled) return;
+
+        if (data.ok) {
+          setProduct(data.listing);
+        } else if (data.redirectSlug) {
+          // Slug moved (listing was renamed) — send the browser to the
+          // current slug instead of showing a dead "Listing Not Found" page.
+          router.replace(`/listings/${data.redirectSlug}`);
+          return;
+        } else {
+          setError(data.message || "Failed to load product details.");
+        }
+      } catch {
+        if (!cancelled) setError("Network error occurred.");
+      } finally {
+        if (!cancelled) setIsLoading(false);
       }
-    } catch {
-      if (!cancelled) setError("Network error occurred.");
-    } finally {
-      if (!cancelled) setIsLoading(false);
-    }
-  };
+    };
 
-  fetchProduct();
-  return () => { cancelled = true; };
-}, [slug]); 
+    fetchProduct();
+    return () => { cancelled = true; };
+  }, [slug, router]);
 
   const productId = product?.id;
   const categoryName = product?.category?.name;
@@ -438,29 +444,6 @@ useEffect(() => {
                   View Profile
                 </button>
               </div>
-
-              {/* <div className="flex items-center gap-10 mb-6">
-                <div>
-                  <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1">
-                    RATING
-                  </p>
-                  <div className="flex items-center gap-1 text-sm font-extrabold text-gray-900">
-                    <Star className="w-4 h-4 text-yellow-400 fill-yellow-400" /> 4.8
-                  </div>
-                </div>
-                
-              </div> */}
-
-              {/* <div className="flex gap-3">
-                {product.negotiable && (
-                  <button className="flex-1 flex items-center justify-center gap-2 py-3 border-2 border-gray-100 text-gray-800 font-extrabold text-xs rounded-xl hover:bg-gray-50 transition-colors cursor-pointer">
-                    <Tag className="w-4 h-4" /> Make Offer
-                  </button>
-                )}
-                <button className="flex-1 flex items-center justify-center gap-2 py-3 bg-[#EB3B18] text-white font-extrabold text-xs rounded-xl hover:bg-[#d93616] transition-colors cursor-pointer shadow-sm">
-                  <MessageSquare className="w-4 h-4" /> Message
-                </button>
-              </div> */}
             </div>
           </div>
         </div>
