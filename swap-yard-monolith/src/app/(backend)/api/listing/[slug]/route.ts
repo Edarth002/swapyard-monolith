@@ -1,26 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { verifyToken } from "@/lib/token";
 
 export const runtime = "nodejs";
-
-async function getCookie(req: Request, name: string) {
-  const cookie = req.headers.get("cookie");
-  if (!cookie) return null;
-
-  return (
-    cookie
-      .split("; ")
-      .find((c) => c.startsWith(`${name}=`))
-      ?.split("=")[1] ?? null
-  );
-}
-
-function toNullableString(value: FormDataEntryValue | null) {
-  if (value === null) return undefined;
-  const parsed = String(value).trim();
-  return parsed ? parsed : null;
-}
 
 export async function GET(
   _req: Request,
@@ -51,16 +32,34 @@ export async function GET(
       },
     });
 
-    if (!listing) {
+    if (listing) {
+      return NextResponse.json({ ok: true, listing }, { status: 200 });
+    }
+
+    // Direct match missed — check whether this used to be a valid slug for
+    // a listing that's since been renamed, so we can point the client at
+    // its current slug instead of a dead end.
+    const historyMatch = await prisma.listingSlugHistory.findFirst({
+      where: { slug },
+      select: {
+        listing: { select: { slug: true } },
+      },
+    });
+
+    if (historyMatch?.listing) {
       return NextResponse.json(
-        { message: "Listing not found" },
+        {
+          ok: false,
+          message: "Listing has moved",
+          redirectSlug: historyMatch.listing.slug,
+        },
         { status: 404 }
       );
     }
 
     return NextResponse.json(
-      { ok: true, listing },
-      { status: 200 }
+      { message: "Listing not found" },
+      { status: 404 }
     );
   } catch (err) {
     console.error("Error fetching listing:", err);

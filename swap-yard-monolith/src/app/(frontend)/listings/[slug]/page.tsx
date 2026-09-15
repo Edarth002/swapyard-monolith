@@ -68,8 +68,6 @@ export default function ProductDetailsPage() {
         if (data.ok) {
           setProduct(data.listing);
         } else if (data.redirectSlug) {
-          // Slug moved (listing was renamed) — send the browser to the
-          // current slug instead of showing a dead "Listing Not Found" page.
           router.replace(`/listings/${data.redirectSlug}`);
           return;
         } else {
