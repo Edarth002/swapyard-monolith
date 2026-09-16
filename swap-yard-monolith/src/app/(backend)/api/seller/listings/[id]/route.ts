@@ -354,9 +354,15 @@ export async function DELETE(
       return NextResponse.json({ message: "Listing not found" }, { status: 404 });
     }
 
-    const listing = await prisma.listing.update({
-      where: { id: existing.id },
-      data: { status: "REMOVED" },
+    const listing = await prisma.$transaction(async (tx) => {
+      await tx.cartItem.deleteMany({
+        where: { listingId: existing.id },
+      });
+
+      return await tx.listing.update({
+        where: { id: existing.id },
+        data: { status: "REMOVED" },
+      });
     });
 
     return NextResponse.json(

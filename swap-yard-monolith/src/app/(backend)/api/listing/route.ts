@@ -141,7 +141,7 @@ export async function POST(req: Request) {
     return NextResponse.json(result, { status: 201 });
 
   } catch (err: any) {
-    // 5. CLEANUP: If DB transaction fails, delete the images from Cloudinary
+    // CLEANUP: If DB transaction fails, delete the images from Cloudinary
     if (uploaded.length > 0) {
       const publicIds = uploaded.map(img => img.public_id);
       await deleteManyByPublicIds(publicIds).catch(console.error);
