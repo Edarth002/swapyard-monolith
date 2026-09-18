@@ -48,15 +48,12 @@ export async function POST(req: Request) {
       return NextResponse.json({ received: true }, { status: 200 });
     }
 
-    // Idempotency guard — Paystack can and does deliver the same webhook
-    // more than once, and this also covers the case where /api/payments/verify
-    // already processed this same payment from the callback redirect.
+    // Idempotency guard — Paystack can and does deliver the same webhook more than once, and this also covers the case where /api/payments/verify already processed this same payment from the callback redirect.
     if (payment.status === "SUCCESS") {
       return NextResponse.json({ received: true }, { status: 200 });
     }
 
-    // Sanity check the amount actually paid matches what we expected —
-    // guards against a tampered client-side amount or metadata mismatch.
+    // Sanity check the amount actually paid matches what we expected
     const expectedKobo = Math.round(payment.amount * 100);
     if (amount !== expectedKobo) {
       console.error("[Paystack webhook] Amount mismatch", { expectedKobo, received: amount, paymentId });
@@ -65,7 +62,9 @@ export async function POST(req: Request) {
 
     await prisma.$transaction([
       prisma.payment.update({
-        where: { id: paymentId },
+        where: { id: paymentId ,
+        status: {not: "SUCCESS"} //This flags against double processing of the same payment, if the status is already SUCCESS, it will not update again
+        },
         data: {
           status: "SUCCESS",
           providerRef: reference,
