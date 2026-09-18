@@ -8,6 +8,7 @@ import { WishlistProvider } from "./context/WishlistContext";
 import { Toaster } from "react-hot-toast"; 
 import { ClientNavigation } from "@/components/layouts/ClientNavigation"; 
 import "./globals.css";
+import { NetworkStatusBanner } from "@/components/layouts/NetworkStatusBanner";
 
 const geistSans = Geist({
   subsets: ["latin"],
@@ -37,6 +38,7 @@ export default function RootLayout({
             <WishlistProvider>
               <NotificationProvider>
                 <ClientNavigation>
+                  <NetworkStatusBanner/>
                   {children}
                 </ClientNavigation>
               </NotificationProvider>
