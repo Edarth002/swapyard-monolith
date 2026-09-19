@@ -255,10 +255,10 @@ function ConfirmDeliveryButton({ orderId, onConfirmed }: { orderId: string; onCo
         setLoading(true);
         setError(null);
         try {
-            const res = await fetch(`/api/orders/${orderId}/update`, {
-                method: "POST",
+            const res = await fetch(`/api/orders/${orderId}`, {
+                method: "PATCH",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ status: "BUYER_CONFIRMED" }),
+                body: JSON.stringify({ status: "COMPLETED" }),
             });
             const data = await res.json();
             if (!res.ok || !data.ok) throw new Error(data.message || "Failed to confirm delivery.");
