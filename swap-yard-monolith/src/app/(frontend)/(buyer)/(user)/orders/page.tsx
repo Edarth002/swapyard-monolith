@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import {
     Search,
     ChevronDown,
@@ -250,10 +250,19 @@ function ProgressStep({ icon, label, state, activeColor, isLast }: ProgressStepP
 function ConfirmDeliveryButton({ orderId, onConfirmed }: { orderId: string; onConfirmed: () => void }) {
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    const [success, setSuccess] = useState(false);
+    const isSubmittingRef = useRef(false);
 
     const handleConfirm = async () => {
+        // Synchronous guard — setLoading(true) alone isn't enough, since a
+        // second click can fire before React re-renders with the button
+        // actually disabled. This blocks it immediately, same tick.
+        if (isSubmittingRef.current) return;
+        isSubmittingRef.current = true;
+
         setLoading(true);
         setError(null);
+        setSuccess(false);
         try {
             const res = await fetch(`/api/orders/${orderId}`, {
                 method: "PATCH",
@@ -261,10 +270,23 @@ function ConfirmDeliveryButton({ orderId, onConfirmed }: { orderId: string; onCo
                 body: JSON.stringify({ status: "COMPLETED" }),
             });
             const data = await res.json();
-            if (!res.ok || !data.ok) throw new Error(data.message || "Failed to confirm delivery.");
+
+            if (!res.ok) {
+                throw new Error(data.message || "Failed to confirm delivery.");
+            }
+
+            if (data.order?.status !== "COMPLETED") {
+                throw new Error("Order was not marked as completed. Please try again.");
+            }
+
+            setSuccess(true);
             onConfirmed();
         } catch (err: unknown) {
             setError(err instanceof Error ? err.message : "Something went wrong.");
+            // Only release the lock on failure — a genuine success should
+            // stay locked (the button also disables via `success` below),
+            // since the order is already COMPLETED and shouldn't be retried.
+            isSubmittingRef.current = false;
         } finally {
             setLoading(false);
         }
@@ -274,12 +296,21 @@ function ConfirmDeliveryButton({ orderId, onConfirmed }: { orderId: string; onCo
         <div className="flex flex-col gap-1">
             <button
                 onClick={handleConfirm}
-                disabled={loading}
+                disabled={loading || success}
                 className="flex items-center justify-center gap-2 w-full py-2.5 rounded-xl bg-teal-500 hover:bg-teal-600 active:scale-[0.98] text-white text-sm font-semibold transition-all disabled:opacity-60 disabled:cursor-not-allowed cursor-pointer"
             >
-                {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <PackageCheck className="w-4 h-4" />}
-                {loading ? "Confirming…" : "I've received this order"}
+                {loading ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                    <PackageCheck className="w-4 h-4" />
+                )}
+                {loading ? "Confirming…" : success ? "Confirmed" : "I've received this order"}
             </button>
+            {success && (
+                <p className="text-xs text-teal-600 text-center font-semibold">
+                    Delivery confirmed successfully.
+                </p>
+            )}
             {error && <p className="text-xs text-red-500 text-center">{error}</p>}
         </div>
     );
