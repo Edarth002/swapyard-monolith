@@ -181,7 +181,7 @@ export async function POST(req: Request) {
     { 
       message: "Order created, but payment initialization failed.", 
       order: newOrder,
-      error: paystackData.message 
+      error: paystackData?.message ?? "Failed to initialize payment with Paystack" 
     },
     { status: 207 }
   );
@@ -190,7 +190,7 @@ export async function POST(req: Request) {
     const finalResponse = {
       message: "Order created",
       order: newOrder,
-      paymentUrl: paystackData.data.authorization_url,
+      paymentUrl: paystackData?.data?.authorization_url ?? null,
     };
 
     await prisma.idempotencyKey.update({
