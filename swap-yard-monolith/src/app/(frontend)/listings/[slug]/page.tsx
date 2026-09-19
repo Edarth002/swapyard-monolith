@@ -61,7 +61,7 @@ export default function ProductDetailsPage() {
       setIsLoading(true);
       setError("");
       try {
-        const res = await fetch(`/api/listing/${slug}`);
+        const res = await fetch(`/api/listings/${slug}`);
         const data = await res.json();
         if (cancelled) return;
 
