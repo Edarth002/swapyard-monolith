@@ -157,6 +157,7 @@ function ListingsContent() {
   const [meta, setMeta] = useState({ total: 0, page: 1, pages: 1 });
   const [isLoading, setIsLoading] = useState(true);
 
+
   const [mapVisibleCount, setMapVisibleCount] = useState(4);
 
   useEffect(() => {

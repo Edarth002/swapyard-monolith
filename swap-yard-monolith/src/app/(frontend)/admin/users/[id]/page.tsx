@@ -177,7 +177,7 @@ export default function AdminUserDetailPage() {
                   <div key={listing.id} className="flex items-center gap-4 p-3 rounded-xl border border-slate-100">
                     <div className="w-14 h-14 rounded-lg bg-slate-100 overflow-hidden shrink-0">
                       {listing.images?.[0]?.url && (
-                        <img src={listing.images[0].url} alt={listing.name} className="w-full h-full object-cover" />
+                        <img src={listing.images?.[0]?.url} alt={listing.name} className="w-full h-full object-cover" />
                       )}
                     </div>
                     <div className="flex-1 min-w-0">
