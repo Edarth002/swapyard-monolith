@@ -13,7 +13,7 @@ export const LatestListings = () => {
     const fetchListings = async () => {
       setIsLoading(true);
       try {
-        const res = await fetch("/api/listing?limit=8");
+        const res = await fetch("/api/listings?limit=8");
         const data = await res.json();
         
         if (data.ok) {
