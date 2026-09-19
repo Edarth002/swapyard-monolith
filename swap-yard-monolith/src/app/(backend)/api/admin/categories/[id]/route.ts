@@ -6,7 +6,7 @@ import {
   uploadOneImageFile,
   deleteImageByPublicId,
 } from "@/app/(backend)/utils/cloudinary";
-import { updateCategorySchema } from "../../../category/schema";
+import { updateCategorySchema } from "../../../categories/schema";
 import { createCategorySlug } from "@/lib/slugGenerator";
 
 export const runtime = "nodejs";

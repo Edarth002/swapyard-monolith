@@ -1,6 +1,6 @@
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
-import { getListingsSchema } from "@/app/(backend)/api/listing/schema";
+import { getListingsSchema } from "@/app/(backend)/api/listings/schema";
 
 export async function fetchListings(searchParams: URLSearchParams, extraWhere?: Prisma.ListingWhereInput) {
   const rawQuery = {
