@@ -157,7 +157,6 @@ function ListingsContent() {
   const [meta, setMeta] = useState({ total: 0, page: 1, pages: 1 });
   const [isLoading, setIsLoading] = useState(true);
 
-  // How many map-view items are currently visible; grows when "Load More" is clicked.
   const [mapVisibleCount, setMapVisibleCount] = useState(4);
 
   useEffect(() => {
@@ -165,7 +164,7 @@ function ListingsContent() {
       setIsLoading(true);
       try {
         const queryString = searchParams.toString();
-        const res = await fetch(`/api/listing?${queryString}`);
+        const res = await fetch(`/api/listings?${queryString}`);
         const alldata = await res.json();
 
         const filteredItems = alldata.items.filter(
