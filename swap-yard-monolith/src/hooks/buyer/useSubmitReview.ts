@@ -35,7 +35,7 @@ export function useSubmitReview({
             setIsSubmitting(true);
 
             const isEditing = !!existingReviewId;
-            const url = isEditing ? `/api/review/${existingReviewId}` : `/api/review`;
+            const url = isEditing ? `/api/reviews/${existingReviewId}` : `/api/review`;
             const method = isEditing ? "PUT" : "POST";
 
             const payload = isEditing 
@@ -77,7 +77,7 @@ export function useSubmitReview({
             setIsSubmitting(true);
             setError("");
             
-            const res = await fetch(`/api/review/${reviewId}`, { method: "DELETE" });
+            const res = await fetch(`/api/reviews/${reviewId}`, { method: "DELETE" });
             const data = await res.json();
             
             if(!res.ok) throw new Error(data.message || "Failed to delete review");
