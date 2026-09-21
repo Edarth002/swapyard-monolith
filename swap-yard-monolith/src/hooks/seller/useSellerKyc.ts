@@ -67,7 +67,7 @@ export function useSellerKyc() {
 
     const handleFileChange = (e: ChangeEvent<HTMLInputElement>, fileType: keyof typeof files) => {
         if (e.target.files && e.target.files[0]) {
-            setFiles(prev => ({ ...prev, [fileType]: e.target.files![0] }));
+            setFiles(prev => ({ ...prev, [fileType]: e.target.files?.[0] || null }));
         }
     };
 
@@ -90,7 +90,7 @@ export function useSellerKyc() {
             if (files.businessLicense) submitData.append("businessLicense", files.businessLicense);
             if (files.verifiedId) submitData.append("idDocument", files.verifiedId); // Mapped
 
-            const res = await fetch("/api/verification", { 
+            const res = await fetch("/api/verifications", { 
                 method: "POST",
                 body: submitData
             });
