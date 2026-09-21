@@ -2,6 +2,11 @@ import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 import { verifyToken } from "@/lib/token";
 import { prisma } from "@/lib/prisma";
+import {
+  handleRouteError,
+  UnauthorizedError,
+  ForbiddenError,
+} from "@/lib/errors";
 
 function pctChange(current: number, previous: number): { change: string; isUp: boolean } {
   if (previous === 0) {
@@ -15,17 +20,18 @@ function pctChange(current: number, previous: number): { change: string; isUp: b
 
 export async function GET() {
   try {
-    const token = (await cookies()).get("session")?.value;
+    const cookieStore = await cookies();
+    const token = cookieStore.get("session")?.value;
 
     if (!token) {
-      return NextResponse.json({ message: "Unauthorized" }, { status: 401 });
+      throw new UnauthorizedError("Authentication required");
     }
 
     const payload = await verifyToken(token);
     const userId = typeof payload === "string" ? payload : payload?.userId;
 
     if (!userId) {
-      return NextResponse.json({ message: "Unauthorized" }, { status: 401 });
+      throw new UnauthorizedError("Invalid or expired session token");
     }
 
     const currentUser = await prisma.user.findUnique({
@@ -34,11 +40,11 @@ export async function GET() {
     });
 
     if (!currentUser) {
-      return NextResponse.json({ message: "Unauthorized" }, { status: 401 });
+      throw new UnauthorizedError("User account not found");
     }
 
     if (currentUser.role !== "ADMIN") {
-      return NextResponse.json({ message: "Forbidden" }, { status: 403 });
+      throw new ForbiddenError("Admin access required");
     }
 
     const now = new Date();
@@ -260,8 +266,6 @@ export async function GET() {
       value: g._count._all,
     }));
 
-    // ProductStatus only has AVAILABLE / SOLD in your schema — the mock's
-    // Pending/Rejected slices don't correspond to real data, so they're dropped.
     const STATUS_LABELS: Record<string, string> = { AVAILABLE: "Available", SOLD: "Sold" };
     const STATUS_COLORS: Record<string, string> = { AVAILABLE: "#10B981", SOLD: "#3B82F6" };
     const pieData = statusGroups.map((g) => ({
@@ -286,9 +290,9 @@ export async function GET() {
         type: "listing" as const,
         label: "New listing created",
         desc: `${l.name} by ${
-  l.seller.username ??
-  ([l.seller.firstname, l.seller.lastname].filter(Boolean).join(" ") || "a seller")
-}`,
+          l.seller.username ??
+          ([l.seller.firstname, l.seller.lastname].filter(Boolean).join(" ") || "a seller")
+        }`,
         createdAt: l.createdAt,
       })),
       ...recentOrders.map((o) => ({
@@ -313,7 +317,6 @@ export async function GET() {
       { status: 200 }
     );
   } catch (error) {
-    console.error("Error fetching admin dashboard stats:", error);
-    return NextResponse.json({ message: "Server error" }, { status: 500 });
+    return handleRouteError(error);
   }
 }
