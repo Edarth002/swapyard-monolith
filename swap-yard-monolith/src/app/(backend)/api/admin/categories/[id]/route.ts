@@ -8,6 +8,7 @@ import {
 } from "@/app/(backend)/utils/cloudinary";
 import { updateCategorySchema } from "../../../categories/schema";
 import { createCategorySlug } from "@/lib/slugGenerator";
+import { handleRouteError, UnauthorizedError, NotFoundError } from "@/lib/errors";
 
 export const runtime = "nodejs";
 
@@ -52,7 +53,7 @@ export async function PATCH(
     const admin = await getAdmin(req);
 
     if (!admin) {
-      return NextResponse.json({ message: "Unauthorized" }, { status: 401 });
+      throw new UnauthorizedError();
     }
 
     const { id } = await ctx.params;
@@ -62,7 +63,7 @@ export async function PATCH(
     });
 
     if (!existing) {
-      return NextResponse.json({ message: "Not found" }, { status: 404 });
+      throw new NotFoundError("Category not found");
     }
 
     const formData = await req.formData();
@@ -74,19 +75,8 @@ export async function PATCH(
           : undefined,
     };
 
-    const parsed = updateCategorySchema.safeParse(rawInput);
 
-    if (!parsed.success) {
-      return NextResponse.json(
-        {
-          message: "Invalid input",
-          errors: parsed.error.flatten().fieldErrors,
-        },
-        { status: 400 }
-      );
-    }
-
-    const { name } = parsed.data;
+    const { name } = updateCategorySchema.parse(rawInput);
 
     const data: Prisma.CategoryUpdateInput = {};
 
@@ -160,6 +150,6 @@ export async function PATCH(
       } catch {}
     }
 
-    return NextResponse.json({ message: "Server error" }, { status: 500 });
+    return handleRouteError(err);
   }
 }
