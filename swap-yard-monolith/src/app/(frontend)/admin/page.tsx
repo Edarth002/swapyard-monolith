@@ -143,7 +143,7 @@ export default function AdminDashboard() {
                 state.activity.map((act, i) => (
                   <div key={i} className="flex gap-3 text-xs items-start">
                     <div className={`w-8 h-8 rounded-full flex-shrink-0 flex items-center justify-center font-bold ${ACTIVITY_COLORS[act.type]}`}>
-                      {act.label[0]}
+                      {act?.label?.[0]}
                     </div>
                     <div className="flex-1">
                       <p className="font-semibold text-slate-800">{act.label}</p>
@@ -225,7 +225,7 @@ export default function AdminDashboard() {
                   <div className="flex items-center gap-2.5">
                     <span className="font-bold text-slate-400 w-4">{i + 1}</span>
                     <div className="w-7 h-7 rounded-full bg-slate-100 flex items-center justify-center font-semibold text-slate-600 text-[11px]">
-                      {seller.name[0]}
+                      {seller?.name?.[0]}
                     </div>
                     <span className="font-semibold text-slate-800">{seller.name}</span>
                   </div>
