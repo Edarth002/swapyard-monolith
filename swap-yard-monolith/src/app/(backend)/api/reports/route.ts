@@ -93,10 +93,10 @@ export async function POST(req: Request) {
         type: validatedInput.data.type,
         reason: validatedInput.data.reason,
         comment: validatedInput.data.comment,
-        imageUrl1: uploaded[0]?.url ?? null,
-        imagePublicId1: uploaded[0]?.public_id ?? null,
-        imageUrl2: uploaded[1]?.url ?? null,
-        imagePublicId2: uploaded[1]?.public_id ?? null,
+        imageUrl1: uploaded?.[0]?.url ?? null,
+        imagePublicId1: uploaded?.[0]?.public_id ?? null,
+        imageUrl2: uploaded?.[1]?.url ?? null,
+        imagePublicId2: uploaded?.[1]?.public_id ?? null,
       },
       include: {
         reporter: { select: { id: true, firstname: true, lastname: true } },
@@ -106,7 +106,7 @@ export async function POST(req: Request) {
 
     return NextResponse.json({ message: "Report submitted successfully", report }, { status: 201 });
   } catch (err: any) {
-    if (uploaded.length > 0) {
+    if (uploaded?.length > 0) {
       await deleteManyByPublicIds(uploaded.map((img) => img.public_id)).catch(console.error);
     }
     console.error("Error creating report:", err);
