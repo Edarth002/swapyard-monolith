@@ -42,7 +42,7 @@ export default function AdminUserDetailPage() {
 
   const user = state.user;
   const displayName = [user.firstname, user.lastname].filter(Boolean).join(" ") || user.email;
-  const initial = (user.firstname?.[0] ?? user.email[0]).toUpperCase();
+  const initial = (user.firstname?.[0] ?? user.email?.[0] ?? "U").toUpperCase();
 
   return (
     <div className="space-y-6">

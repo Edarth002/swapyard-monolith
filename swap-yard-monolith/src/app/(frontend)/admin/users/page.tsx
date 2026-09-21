@@ -124,7 +124,7 @@ export default function UsersAdminPage() {
               ) : (
                 state.users.map((user) => {
                   const displayName = [user.firstname, user.lastname].filter(Boolean).join(" ") || user.email;
-                  const initial = (user.firstname?.[0] ?? user.email[0]).toUpperCase();
+                  const initial = (user.firstname?.[0] ?? user.email?.[0] ?? "U").toUpperCase();
 
                   return (
                     <tr key={user.id} className="hover:bg-slate-50/70 transition">
