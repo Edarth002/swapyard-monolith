@@ -190,7 +190,7 @@ function ListingsContent() {
             condition: item.condition || "Used",
             imageUrl:
               item.images && item.images.length > 0
-                ? item.images[0].url
+                ? item.images?.[0]?.url
                 : "https://images.unsplash.com/photo-1598300042247-d088f8ab3a91?q=80&w=500&auto=format&fit=crop",
             isVerified: true,
             rating: 4.8,

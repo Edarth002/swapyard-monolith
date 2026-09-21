@@ -124,7 +124,7 @@ export default function ProductDetailsPage() {
     id: product.id,
     title: product.name,
     price: product.price,
-    imageUrl: displayImages[0],
+    imageUrl: displayImages?.[0] ?? "https://images.unsplash.com/photo-1555041469-a586c61ea9bc?auto=format&fit=crop&w=1000&q=80",
     quantity,
   });
 
@@ -162,7 +162,7 @@ export default function ProductDetailsPage() {
         id: product.id,
         title: product.name,
         price: product.price,
-        imageUrl: displayImages[0],
+        imageUrl: displayImages?.[0] ?? "https://images.unsplash.com/photo-1555041469-a586c61ea9bc?auto=format&fit=crop&w=1000&q=80",
         location: [product.location, product.state].filter(Boolean).join(", "),
         rating: 4.8,
         reviewsCount: 12,
@@ -186,7 +186,7 @@ export default function ProductDetailsPage() {
         id: item.id,
         title: item.name,
         price: item.price,
-        imageUrl: relatedImages[0],
+        imageUrl: relatedImages?.[0] ?? "https://images.unsplash.com/photo-1555041469-a586c61ea9bc?auto=format&fit=crop&w=1000&q=80",
         location: [item.location, item.state].filter(Boolean).join(", "),
         rating: item.rating ?? 0,
         reviewsCount: item.reviewsCount ?? 0,
