@@ -2,8 +2,19 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { verifyToken } from "@/lib/token";
 import { addToCartSchema, updateCartItemSchema } from "./schema";
+import { z } from "zod";
+import {
+  handleRouteError,
+  UnauthorizedError,
+  NotFoundError,
+  ForbiddenError,
+} from "@/lib/errors";
 
 export const runtime = "nodejs";
+
+const deleteCartItemSchema = z.object({
+  listingId: z.string().trim().min(1, "Listing ID is required"),
+});
 
 async function getCookie(req: Request, name: string) {
   const cookie = req.headers.get("cookie");
@@ -19,33 +30,29 @@ async function getCookie(req: Request, name: string) {
 
 async function getUser(req: Request) {
   const token = await getCookie(req, "session");
-  if (!token) return null;
+  if (!token) throw new UnauthorizedError("Authentication required");
 
   const payload = await verifyToken(token);
   const userId = typeof payload === "string" ? payload : payload?.userId;
-
-  if (!userId) return null;
+  if (!userId) throw new UnauthorizedError("Invalid or expired session token");
 
   const user = await prisma.user.findUnique({
     where: { id: userId },
+    select: { id: true, role: true },
   });
 
-  if (!user) return null;
+  if (!user) throw new UnauthorizedError("User account not found");
 
-  // Cart access is no longer BUYER-only — admins can use it too.
-  if (user.role !== "BUYER" && user.role !== "ADMIN") return null;
+  if (user.role !== "BUYER" && user.role !== "ADMIN") {
+    throw new ForbiddenError("Only buyers or admins can access cart operations");
+  }
 
   return user;
 }
 
-
 export async function GET(req: Request) {
   try {
     const user = await getUser(req);
-
-    if (!user) {
-      return NextResponse.json({ message: "Unauthorized" }, { status: 401 });
-    }
 
     const cart = await prisma.cart.findUnique({
       where: { buyerId: user.id },
@@ -65,50 +72,34 @@ export async function GET(req: Request) {
       },
     });
 
-    return NextResponse.json(cart || { items: [] });
+    return NextResponse.json(
+      { ok: true, data: cart ?? { items: [] } },
+      { status: 200 }
+    );
   } catch (error) {
-    console.error("GET CART ERROR:", error);
-    return NextResponse.json({ message: "Server error" }, { status: 500 });
+    return handleRouteError(error);
   }
 }
-
 
 export async function POST(req: Request) {
   try {
     const user = await getUser(req);
 
-    if (!user) {
-      return NextResponse.json({ message: "Unauthorized" }, { status: 401 });
-    }
-
     const body = await req.json();
-    const parsed = addToCartSchema.safeParse(body);
-
-    if (!parsed.success) {
-      return NextResponse.json(
-        {
-          message: "Invalid input",
-          errors: parsed.error.flatten().fieldErrors,
-        },
-        { status: 400 }
-      );
-    }
-
-    const { listingId, quantity } = parsed.data;
+    const { listingId, quantity } = addToCartSchema.parse(body);
 
     const listing = await prisma.listing.findUnique({
       where: { id: listingId },
+      select: { id: true },
     });
 
     if (!listing) {
-      return NextResponse.json(
-        { message: "Listing not found" },
-        { status: 404 }
-      );
+      throw new NotFoundError("Listing not found");
     }
 
     let cart = await prisma.cart.findUnique({
       where: { buyerId: user.id },
+      select: { id: true },
     });
 
     if (!cart) {
@@ -116,10 +107,11 @@ export async function POST(req: Request) {
         data: {
           buyerId: user.id,
         },
+        select: { id: true },
       });
     }
 
-    await prisma.cartItem.upsert({
+    const item = await prisma.cartItem.upsert({
       where: {
         cartId_listingId: {
           cartId: cart.id,
@@ -136,49 +128,32 @@ export async function POST(req: Request) {
       },
     });
 
-    return NextResponse.json({ message: "Added to cart" });
+    return NextResponse.json(
+      { ok: true, message: "Added to cart", data: item },
+      { status: 200 }
+    );
   } catch (error) {
-    console.error("ADD TO CART ERROR:", error);
-    return NextResponse.json({ message: "Server error" }, { status: 500 });
+    return handleRouteError(error);
   }
 }
-
 
 export async function PATCH(req: Request) {
   try {
     const user = await getUser(req);
 
-    if (!user) {
-      return NextResponse.json({ message: "Unauthorized" }, { status: 401 });
-    }
-
     const body = await req.json();
-    const parsed = updateCartItemSchema.safeParse(body);
-
-    if (!parsed.success) {
-      return NextResponse.json(
-        {
-          message: "Invalid input",
-          errors: parsed.error.flatten().fieldErrors,
-        },
-        { status: 400 }
-      );
-    }
-
-    const { listingId, quantity } = parsed.data;
+    const { listingId, quantity } = updateCartItemSchema.parse(body);
 
     const cart = await prisma.cart.findUnique({
       where: { buyerId: user.id },
+      select: { id: true },
     });
 
     if (!cart) {
-      return NextResponse.json(
-        { message: "Cart not found" },
-        { status: 404 }
-      );
+      throw new NotFoundError("Cart not found");
     }
 
-    await prisma.cartItem.update({
+    const updatedItem = await prisma.cartItem.update({
       where: {
         cartId_listingId: {
           cartId: cart.id,
@@ -188,41 +163,29 @@ export async function PATCH(req: Request) {
       data: { quantity },
     });
 
-    return NextResponse.json({ message: "Cart updated" });
+    return NextResponse.json(
+      { ok: true, message: "Cart updated", data: updatedItem },
+      { status: 200 }
+    );
   } catch (error) {
-    console.error("UPDATE CART ERROR:", error);
-    return NextResponse.json({ message: "Server error" }, { status: 500 });
+    return handleRouteError(error);
   }
 }
-
 
 export async function DELETE(req: Request) {
   try {
     const user = await getUser(req);
 
-    if (!user) {
-      return NextResponse.json({ message: "Unauthorized" }, { status: 401 });
-    }
-
     const body = await req.json();
-    const { listingId } = body;
-
-    if (!listingId) {
-      return NextResponse.json(
-        { message: "Listing ID required" },
-        { status: 400 }
-      );
-    }
+    const { listingId } = deleteCartItemSchema.parse(body);
 
     const cart = await prisma.cart.findUnique({
       where: { buyerId: user.id },
+      select: { id: true },
     });
 
     if (!cart) {
-      return NextResponse.json(
-        { message: "Cart not found" },
-        { status: 404 }
-      );
+      throw new NotFoundError("Cart not found");
     }
 
     await prisma.cartItem.delete({
@@ -234,9 +197,11 @@ export async function DELETE(req: Request) {
       },
     });
 
-    return NextResponse.json({ message: "Item removed" });
+    return NextResponse.json(
+      { ok: true, message: "Item removed" },
+      { status: 200 }
+    );
   } catch (error) {
-    console.error("DELETE CART ITEM ERROR:", error);
-    return NextResponse.json({ message: "Server error" }, { status: 500 });
+    return handleRouteError(error);
   }
 }
