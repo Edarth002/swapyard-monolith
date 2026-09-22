@@ -2,6 +2,12 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { verifyToken } from "@/lib/token";
 import { checkoutSchema } from "../schema";
+import {
+  handleRouteError,
+  UnauthorizedError,
+  ConflictError,
+  AppError,
+} from "@/lib/errors";
 
 export const runtime = "nodejs";
 
@@ -14,32 +20,33 @@ function getCookie(req: Request, name: string): string | null {
 }
 
 async function getUser(req: Request) {
-  try {
-    const token = getCookie(req, "session");
-    if (!token) return null;
-    const payload = await verifyToken(token);
-    const userId = typeof payload === "string" ? payload : payload?.userId;
-    if (!userId) return null;
-    return prisma.user.findUnique({ where: { id: userId, role: "BUYER" } });
-  } catch {
-    return null;
+  const token = getCookie(req, "session");
+  if (!token) throw new UnauthorizedError("Authentication required");
+
+  const payload = await verifyToken(token);
+  const userId = typeof payload === "string" ? payload : payload?.userId;
+  if (!userId) throw new UnauthorizedError("Invalid or expired session token");
+
+  const user = await prisma.user.findUnique({
+    where: { id: userId, role: "BUYER" },
+    select: { id: true, email: true },
+  });
+
+  if (!user) {
+    throw new UnauthorizedError("Buyer authentication required");
   }
+
+  return user;
 }
 
 export async function POST(req: Request) {
   const idempotencyKey = req.headers.get("Idempotency-Key");
   if (!idempotencyKey) {
-    return NextResponse.json(
-      { message: "Idempotency-Key header is required" },
-      { status: 400 }
-    );
+    return handleRouteError(new AppError("Idempotency-Key header is required", 400));
   }
 
   try {
     const user = await getUser(req);
-    if (!user) {
-      return NextResponse.json({ message: "Unauthorized" }, { status: 401 });
-    }
 
     const existingEntry = await prisma.idempotencyKey.findUnique({
       where: { key: idempotencyKey },
@@ -52,10 +59,7 @@ export async function POST(req: Request) {
     if (existingEntry?.status === "PENDING") {
       const twoMinutesAgo = new Date(Date.now() - 2 * 60_000);
       if (existingEntry.updatedAt > twoMinutesAgo) {
-        return NextResponse.json(
-          { message: "Request is already being processed" },
-          { status: 409 }
-        );
+        throw new ConflictError("Request is already being processed");
       }
     }
 
@@ -66,15 +70,8 @@ export async function POST(req: Request) {
     });
 
     const body = await req.json();
-    const parsed = checkoutSchema.safeParse(body);
-    if (!parsed.success) {
-      return NextResponse.json(
-        { message: "Invalid input", errors: parsed.error.flatten().fieldErrors },
-        { status: 400 }
-      );
-    }
-
-    const { pickupLocation, pickupNote } = parsed.data;
+    // Direct parse -> throws ZodError automatically mapped to 400 Bad Request
+    const { pickupLocation, pickupNote } = checkoutSchema.parse(body);
 
     const cart = await prisma.cart.findUnique({
       where: { buyerId: user.id },
@@ -96,13 +93,16 @@ export async function POST(req: Request) {
     });
 
     if (!cart || cart.items.length === 0) {
-      return NextResponse.json({ message: "Cart is empty" }, { status: 400 });
+      throw new AppError("Cart is empty", 400);
     }
 
     let subtotal = 0;
     const orderItemsData = cart.items.map((item) => {
       if (item.listing.status !== "AVAILABLE") {
-        throw new Error(`Item "${item.listing.name}" is no longer available`);
+        throw new AppError(
+          `Item "${item.listing.name}" is no longer available`,
+          400
+        );
       }
       subtotal += item.listing.price * item.quantity;
       return {
@@ -152,11 +152,11 @@ export async function POST(req: Request) {
 
         return created;
       },
-
       { timeout: 15_000 }
     );
 
-    // --- Paystack initialization (outside transaction, external call) ---
+    // --- Paystack initialization (external call outside atomic DB transaction) ---
+    const baseUrl = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
     const paystackRes = await fetch(
       "https://api.paystack.co/transaction/initialize",
       {
@@ -169,7 +169,7 @@ export async function POST(req: Request) {
           email: user.email,
           amount: Math.round(totalAmount * 100),
           reference: newOrder.payment?.id,
-          callback_url: `${process.env.NEXT_PUBLIC_APP_URL}/payment/success`,
+          callback_url: `${baseUrl}/payment/success`,
         }),
       }
     );
@@ -177,17 +177,21 @@ export async function POST(req: Request) {
     const paystackData = await paystackRes.json();
 
     if (!paystackData.status) {
-  return NextResponse.json(
-    { 
-      message: "Order created, but payment initialization failed.", 
-      order: newOrder,
-      error: paystackData?.message ?? "Failed to initialize payment with Paystack" 
-    },
-    { status: 207 }
-  );
-}
+      return NextResponse.json(
+        {
+          ok: false,
+          message: "Order created, but payment initialization failed.",
+          order: newOrder,
+          error:
+            paystackData?.message ??
+            "Failed to initialize payment with Paystack",
+        },
+        { status: 207 }
+      );
+    }
 
     const finalResponse = {
+      ok: true,
       message: "Order created",
       order: newOrder,
       paymentUrl: paystackData?.data?.authorization_url ?? null,
@@ -199,19 +203,7 @@ export async function POST(req: Request) {
     });
 
     return NextResponse.json(finalResponse, { status: 200 });
-  } catch (error: any) {
-    console.error("CHECKOUT ERROR:", error);
-
-    if (
-      error.message?.includes("no longer available") ||
-      error.message === "Cart is empty"
-    ) {
-      return NextResponse.json({ message: error.message }, { status: 400 });
-    }
-
-    return NextResponse.json(
-      { message: error.message || "Server error" },
-      { status: 500 }
-    );
+  } catch (error) {
+    return handleRouteError(error);
   }
 }
