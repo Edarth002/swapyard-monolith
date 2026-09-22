@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { handleRouteError, NotFoundError } from "@/lib/errors";
 
 export const runtime = "nodejs";
 
@@ -33,12 +34,19 @@ export async function GET(
     });
 
     if (listing) {
-      return NextResponse.json({ ok: true, listing }, { status: 200 });
+      return NextResponse.json(
+        {
+          ok: true,
+          listing: {
+            ...listing,
+            images: listing.images ?? [],
+          },
+        },
+        { status: 200 }
+      );
     }
 
-    // Direct match missed — check whether this used to be a valid slug for
-    // a listing that's since been renamed, so we can point the client at
-    // its current slug instead of a dead end.
+    // Direct match missed — check historical slugs for rename redirects
     const historyMatch = await prisma.listingSlugHistory.findFirst({
       where: { slug },
       select: {
@@ -46,7 +54,7 @@ export async function GET(
       },
     });
 
-    if (historyMatch?.listing) {
+    if (historyMatch?.listing?.slug) {
       return NextResponse.json(
         {
           ok: false,
@@ -57,16 +65,8 @@ export async function GET(
       );
     }
 
-    return NextResponse.json(
-      { message: "Listing not found" },
-      { status: 404 }
-    );
+    throw new NotFoundError("Listing not found");
   } catch (err) {
-    console.error("Error fetching listing:", err);
-
-    return NextResponse.json(
-      { message: "Server error" },
-      { status: 500 }
-    );
+    return handleRouteError(err);
   }
 }

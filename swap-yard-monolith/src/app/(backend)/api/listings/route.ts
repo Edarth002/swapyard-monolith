@@ -1,18 +1,27 @@
 import { NextResponse } from "next/server";
-import type { Prisma } from "@prisma/client";
-import { deleteManyByPublicIds, uploadManyImageFiles } from "@/app/(backend)/utils/cloudinary";
+import {
+  deleteManyByPublicIds,
+  uploadManyImageFiles,
+} from "@/app/(backend)/utils/cloudinary";
 import { prisma } from "@/lib/prisma";
 import { verifyToken } from "@/lib/token";
-import { createListingSchema, getListingsSchema } from "./schema";
+import { createListingSchema } from "./schema";
 import { createSlug } from "@/lib/slugGenerator";
 import { fetchListings } from "@/lib/getListingLogic";
+import {
+  handleRouteError,
+  UnauthorizedError,
+  ForbiddenError,
+  ConflictError,
+  AppError,
+} from "@/lib/errors";
 
 export const runtime = "nodejs";
 
 async function getCookie(req: Request, name: string) {
   const cookie = req.headers.get("cookie");
   if (!cookie) return null;
- 
+
   return (
     cookie
       .split("; ")
@@ -26,30 +35,37 @@ function toNullableString(value: FormDataEntryValue | null) {
   return parsed ? parsed : null;
 }
 
+async function getSeller(req: Request) {
+  const token = await getCookie(req, "session");
+  if (!token) throw new UnauthorizedError("Authentication required");
+
+  const payload = await verifyToken(token);
+  const userId = typeof payload === "string" ? payload : payload?.userId;
+  if (!userId) throw new UnauthorizedError("Invalid or expired session token");
+
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { id: true, role: true },
+  });
+
+  if (!user) throw new UnauthorizedError("User does not exist");
+  if (user.role !== "SELLER") {
+    throw new ForbiddenError("Only sellers can create listings");
+  }
+
+  return user;
+}
+
 export async function POST(req: Request) {
   const idempotencyKey = req.headers.get("idempotency-key");
   if (!idempotencyKey) {
-    return NextResponse.json({ message: "Idempotency-Key header is required" }, { status: 400 });
+    return handleRouteError(new AppError("Idempotency-Key header is required", 400));
   }
 
   let uploaded: Array<{ url: string; public_id: string }> = [];
 
   try {
-    const token = await getCookie(req, "session");
-    if (!token) return NextResponse.json({ message: "Unauthorized" }, { status: 401 });
-
-    const payload = await verifyToken(token);
-    const userId = typeof payload === "string" ? payload : payload?.userId;
-    if (!userId) return NextResponse.json({ message: "Unauthorized" }, { status: 401 });
-
-    const user = await prisma.user.findUnique({
-      where: { id: userId },
-      select: { id: true, role: true },
-    });
-
-    if (!user || user.role !== "SELLER") {
-      return NextResponse.json({ message: "Forbidden: Sellers only" }, { status: 403 });
-    }
+    const user = await getSeller(req);
 
     const existingEntry = await prisma.idempotencyKey.findUnique({
       where: { key: idempotencyKey },
@@ -62,7 +78,7 @@ export async function POST(req: Request) {
     if (existingEntry?.status === "PENDING") {
       const twoMinutesAgo = new Date(Date.now() - 2 * 60000);
       if (existingEntry.updatedAt > twoMinutesAgo) {
-        return NextResponse.json({ message: "Request is already being processed" }, { status: 409 });
+        throw new ConflictError("Request is already being processed");
       }
     }
 
@@ -81,74 +97,92 @@ export async function POST(req: Request) {
       categoryId: toNullableString(formData.get("categoryId")),
     };
 
-    const validatedInput = createListingSchema.safeParse(rawInput);
-    if (!validatedInput.success) {
-      return NextResponse.json({
-        message: "Validation Error",
-        errors: validatedInput.error.flatten().fieldErrors,
-      }, { status: 400 });
-    }
+    // Throws ZodError directly -> handleRouteError yields 400 Bad Request
+    const validatedData = createListingSchema.parse(rawInput);
 
-    if (validatedInput.data.categoryId) {
+    if (validatedData.categoryId) {
       const categoryExists = await prisma.category.findUnique({
-        where: { id: validatedInput.data.categoryId },
+        where: { id: validatedData.categoryId },
+        select: { id: true },
       });
-      if (!categoryExists) return NextResponse.json({ message: "Invalid Category" }, { status: 400 });
+      if (!categoryExists) {
+        throw new AppError("Invalid Category", 400);
+      }
     }
 
-    const images = formData.getAll("images").filter((file): file is File => file instanceof File && file.size > 0);
-    uploaded = images.length ? await uploadManyImageFiles(images, { subfolder: "listings" }) : [];
+    const images = formData
+      .getAll("images")
+      .filter((file): file is File => file instanceof File && file.size > 0);
 
-    const result = await prisma.$transaction(async (tx) => {
-      await tx.idempotencyKey.upsert({
-        where: { key: idempotencyKey },
-        update: { status: "PENDING" },
-        create: { key: idempotencyKey, status: "PENDING" },
-      });
+    uploaded = images.length
+      ? await uploadManyImageFiles(images, { subfolder: "listings" })
+      : [];
 
-      const product = await tx.listing.create({
-        data: {
-          ...validatedInput.data,
-          slug: `${createSlug(validatedInput.data.name)}`,
-          sellerId: user.id,
-          images: {
-            create: uploaded.map((img) => ({
-              url: img.url,
-              publicId: img.public_id,
-            })),
+    const baseSlug = createSlug(validatedData.name);
+    let slug = baseSlug;
+    let existingSlug = await prisma.listing.findUnique({ where: { slug }, select: { id: true } });
+    let counter = 1;
+
+    while (existingSlug) {
+      slug = `${baseSlug}-${counter}`;
+      existingSlug = await prisma.listing.findUnique({ where: { slug }, select: { id: true } });
+      counter++;
+    }
+
+    const result = await prisma.$transaction(
+      async (tx) => {
+        await tx.idempotencyKey.upsert({
+          where: { key: idempotencyKey },
+          update: { status: "PENDING" },
+          create: { key: idempotencyKey, status: "PENDING" },
+        });
+
+        const product = await tx.listing.create({
+          data: {
+            ...validatedData,
+            slug,
+            sellerId: user.id,
+            images: {
+              create: uploaded.map((img) => ({
+                url: img.url,
+                publicId: img.public_id,
+              })),
+            },
           },
-        },
-        include: {
-          images: true,
-          category: { select: { id: true, name: true, image: true } },
-          seller: { select: { id: true, firstname: true, lastname: true } },
-        },
-      });
+          include: {
+            images: true,
+            category: { select: { id: true, name: true, image: true } },
+            seller: { select: { id: true, firstname: true, lastname: true } },
+          },
+        });
 
-      const responseData = { message: "Listing created successfully", listing: product };
-      
-      await tx.idempotencyKey.update({
-        where: { key: idempotencyKey },
-        data: {
-          status: "COMPLETED",
-          response: responseData as any,
-        },
-      });
+        const responseData = {
+          ok: true,
+          message: "Listing created successfully",
+          listing: product,
+        };
 
-      return responseData;
-    }, { timeout: 15000 });
+        await tx.idempotencyKey.update({
+          where: { key: idempotencyKey },
+          data: {
+            status: "COMPLETED",
+            response: responseData as any,
+          },
+        });
+
+        return responseData;
+      },
+      { timeout: 15000 }
+    );
 
     return NextResponse.json(result, { status: 201 });
-
-  } catch (err: any) {
-    // CLEANUP: If DB transaction fails, delete the images from Cloudinary
+  } catch (err) {
     if (uploaded.length > 0) {
-      const publicIds = uploaded.map(img => img.public_id);
-      await deleteManyByPublicIds(publicIds).catch(console.error);
+      const publicIds = uploaded.map((img) => img.public_id);
+      await deleteManyByPublicIds(publicIds).catch(() => null);
     }
 
-    console.error("Error creating listing:", err);
-    return NextResponse.json({ message: err.message || "Server Error" }, { status: 500 });
+    return handleRouteError(err);
   }
 }
 
@@ -156,20 +190,24 @@ export async function GET(req: Request) {
   try {
     const { searchParams } = new URL(req.url);
     const result = await fetchListings(searchParams);
-    
-    return NextResponse.json({
-      ok: true,
-      items: result.items,
-      meta: {
-        total: result.total,
-        page: result.page,
-        pages: Math.ceil(result.total / result.limit),
+
+    return NextResponse.json(
+      {
+        ok: true,
+        items: result.items ?? [],
+        meta: {
+          total: result.total,
+          page: result.page,
+          pages: Math.ceil(result.total / result.limit) || 0,
+        },
+        orderBy: { createdAt: "desc" },
       },
-      orderBy: { createdAt: "desc" }
-    })
-    ;
+      { status: 200 }
+    );
   } catch (err: any) {
-    if (err.message === "INVALID_PARAMS") return NextResponse.json({ message: "Bad Request" }, { status: 400 });
-    return NextResponse.json({ message: "Server Error" }, { status: 500 });
+    if (err.message === "INVALID_PARAMS") {
+      return handleRouteError(new AppError("Invalid query parameters", 400));
+    }
+    return handleRouteError(err);
   }
 }
