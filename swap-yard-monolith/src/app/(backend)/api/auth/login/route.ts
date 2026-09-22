@@ -1,38 +1,37 @@
 import { prisma } from "@/lib/prisma";
-import {createToken, verifyToken} from "@/lib/token";
+import { createToken, verifyToken } from "@/lib/token";
 import bcrypt from "bcryptjs";
 import { NextResponse } from "next/server";
 import { loginSchema } from "../schema";
+import { handleRouteError, UnauthorizedError } from "@/lib/errors";
+
+export const runtime = "nodejs";
 
 export async function POST(req: Request) {
   try {
     const body = await req.json();
-
-   const validatedInput = loginSchema.safeParse(body)
-
-   if (!validatedInput.success) {
-      return NextResponse.json({message: "Input does not meet required schema", error:validatedInput.error.flatten()}, {status: 400})
-   }
-
-   const {email, password} = validatedInput.data
+    
+    const { email, password } = loginSchema.parse(body);
 
     const user = await prisma.user.findUnique({ where: { email } });
 
     if (!user || !user.password) {
-      return NextResponse.json({ message: "Invalid Credentials" }, { status: 401 });
+      throw new UnauthorizedError("Invalid email or password");
     }
 
     const isPasswordValid = await bcrypt.compare(password, user.password);
     if (!isPasswordValid) {
-      return NextResponse.json({ message: "Invalid Credentials" }, { status: 401 });
+      throw new UnauthorizedError("Invalid email or password");
     }
-
-    // Optional: enforce email verification later
 
     const token = await createToken(user.id, user.role);
 
     const response = NextResponse.json(
-      { message: "Login successful", user: { id: user.id, email: user.email, role: user.role } },
+      {
+        ok: true,
+        message: "Login successful",
+        user: { id: user.id, email: user.email, role: user.role },
+      },
       { status: 200 }
     );
 
@@ -41,19 +40,16 @@ export async function POST(req: Request) {
       secure: process.env.NODE_ENV === "production",
       sameSite: "strict",
       path: "/",
-      maxAge: 7 * 24 * 60 * 60
+      maxAge: 7 * 24 * 60 * 60,
     });
 
-
+    if (process.env.NODE_ENV !== "production") {
       console.log("Role from DB:", user.role);
+      console.log("Token verification:", await verifyToken(token));
+    }
 
-      console.log(
-        "Token verification:",
-        await verifyToken(token)
-      );
     return response;
   } catch (error) {
-    console.error("Error during login:", error);
-    return NextResponse.json({ message: "Internal server error" }, { status: 500 });
+    return handleRouteError(error);
   }
 }

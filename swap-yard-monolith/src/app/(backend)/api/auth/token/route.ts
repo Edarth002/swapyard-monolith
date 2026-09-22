@@ -1,34 +1,32 @@
 import { prisma } from "@/lib/prisma";
-import { NextResponse } from "next/server";
-import { after } from "next/server";
+import { NextResponse, after } from "next/server";
 import crypto from "crypto";
 import { Resend } from "resend";
 import { requestPasswordResetSchema } from "../schema";
+import { handleRouteError } from "@/lib/errors";
+
+export const runtime = "nodejs";
 
 const resend = new Resend(process.env.RESEND_API_KEY);
+
+const GENERIC_RESET_MESSAGE =
+  "If an account exists, a reset link has been sent.";
 
 export async function POST(req: Request) {
   try {
     const body = await req.json();
-    const validatedInput = requestPasswordResetSchema.safeParse(body);
 
-    if (!validatedInput.success) {
-      return NextResponse.json(
-        {
-          message: "Input does not meet required schema",
-          errors: validatedInput.error.flatten(),
-        },
-        { status: 400 }
-      );
-    }
+    // Direct parse: fails with 400 Bad Request via handleRouteError on bad input
+    const { email } = requestPasswordResetSchema.parse(body);
 
-    const { email } = validatedInput.data;
-    const user = await prisma.user.findUnique({ where: { email } });
+    const user = await prisma.user.findUnique({
+      where: { email },
+      select: { id: true, email: true },
+    });
 
-    // Consistent response regardless of user existence
     if (!user) {
       return NextResponse.json(
-        { message: "If an account exists, a reset link has been sent." },
+        { ok: true, message: GENERIC_RESET_MESSAGE },
         { status: 200 }
       );
     }
@@ -36,7 +34,7 @@ export async function POST(req: Request) {
     const resetToken = crypto.randomBytes(32).toString("hex");
     const resetTokenExpiry = new Date(Date.now() + 5 * 60 * 1000);
 
-    // Atomically rotate the reset token
+    // Atomically rotate token
     await prisma.$transaction([
       prisma.passwordResetToken.deleteMany({
         where: { email: user.email },
@@ -50,9 +48,9 @@ export async function POST(req: Request) {
       }),
     ]);
 
-    const resetLink = `${process.env.NEXT_PUBLIC_APP_URL}/reset-password?token=${resetToken}`;
+    const baseUrl = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
+    const resetLink = `${baseUrl}/reset-password?token=${resetToken}`;
 
-    // Non-blocking email dispatch executed after the response flushes
     after(async () => {
       try {
         const { error } = await resend.emails.send({
@@ -80,14 +78,10 @@ export async function POST(req: Request) {
     });
 
     return NextResponse.json(
-      { message: "If an account exists, a reset link has been sent." },
+      { ok: true, message: GENERIC_RESET_MESSAGE },
       { status: 200 }
     );
   } catch (error) {
-    console.error("Internal Error:", error);
-    return NextResponse.json(
-      { message: "Internal server error" },
-      { status: 500 }
-    );
+    return handleRouteError(error);
   }
 }

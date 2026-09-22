@@ -2,22 +2,13 @@ import { NextResponse } from "next/server";
 import bcrypt from "bcryptjs";
 import { prisma } from "@/lib/prisma";
 import { registerSchema } from "../schema";
+import { handleRouteError, ConflictError } from "@/lib/errors";
+
+export const runtime = "nodejs";
 
 export async function POST(req: Request) {
   try {
     const body = await req.json();
-
-    const validatedInput = registerSchema.safeParse(body);
-
-    if (!validatedInput.success) {
-      return NextResponse.json(
-        {
-          message: "Input does not meet required schema",
-          errors: validatedInput.error.flatten(),
-        },
-        { status: 400 }
-      );
-    }
 
     const {
       email,
@@ -28,7 +19,7 @@ export async function POST(req: Request) {
       role,
       state,
       contract,
-    } = validatedInput.data;
+    } = registerSchema.parse(body);
 
     const existingUser = await prisma.user.findUnique({
       where: { email },
@@ -36,10 +27,8 @@ export async function POST(req: Request) {
     });
 
     if (existingUser) {
-      return NextResponse.json(
-        { message: "Unable to process registration" },
-        { status: 400 }
-      );
+      // Deterministic 409 Conflict for duplicate resource
+      throw new ConflictError("Invalid registration details. Please check your credentials or log in.");
     }
 
     const hashedPassword = await bcrypt.hash(password, 10);
@@ -63,16 +52,13 @@ export async function POST(req: Request) {
 
     return NextResponse.json(
       {
+        ok: true,
         message: "User created successfully",
         user: newUser,
       },
       { status: 201 }
     );
   } catch (error) {
-    console.error("Error during user registration:", error);
-    return NextResponse.json(
-      { message: "Internal server error" },
-      { status: 500 }
-    );
+    return handleRouteError(error);
   }
 }

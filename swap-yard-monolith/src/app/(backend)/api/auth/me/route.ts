@@ -3,21 +3,35 @@ import { verifyToken } from "@/lib/token";
 import { prisma } from "@/lib/prisma";
 import { NextResponse } from "next/server";
 import { updateProfileSchema } from "../schema";
+import {
+  handleRouteError,
+  UnauthorizedError,
+  ConflictError,
+} from "@/lib/errors";
+
+export const runtime = "nodejs";
+
+async function getSessionUserId(): Promise<string> {
+  const cookieStore = await cookies();
+  const token = cookieStore.get("session")?.value;
+
+  if (!token) {
+    throw new UnauthorizedError("Authentication required");
+  }
+
+  const payload = await verifyToken(token);
+  const userId = typeof payload === "string" ? payload : payload?.userId;
+
+  if (!userId) {
+    throw new UnauthorizedError("Invalid or expired session token");
+  }
+
+  return userId;
+}
 
 export async function GET() {
   try {
-    const token = (await cookies()).get("session")?.value;
-
-    if (!token) {
-      return NextResponse.json({ message: "Unauthorized" }, { status: 401 });
-    }
-
-    const payload = await verifyToken(token);
-    const userId = typeof payload === "string" ? payload : payload?.userId;
-
-    if (!userId) {
-      return NextResponse.json({ message: "Unauthorized" }, { status: 401 });
-    }
+    const userId = await getSessionUserId();
 
     const user = await prisma.user.findUnique({
       where: { id: userId },
@@ -46,46 +60,21 @@ export async function GET() {
     });
 
     if (!user) {
-      return NextResponse.json({ message: "Unauthorized" }, { status: 401 });
+      throw new UnauthorizedError("User account not found");
     }
 
-    return NextResponse.json({ user }, { status: 200 });
+    return NextResponse.json({ ok: true, user }, { status: 200 });
   } catch (error) {
-    console.error("Error fetching profile:", error);
-    return NextResponse.json(
-      { message: "Internal server error" },
-      { status: 500 }
-    );
+    return handleRouteError(error);
   }
 }
 
 export async function PATCH(req: Request) {
   try {
-    const token = (await cookies()).get("session")?.value;
-
-    if (!token) {
-      return NextResponse.json({ message: "Unauthorized" }, { status: 401 });
-    }
-
-    const payload = await verifyToken(token);
-    const userId = typeof payload === "string" ? payload : payload?.userId;
-
-    if (!userId) {
-      return NextResponse.json({ message: "Unauthorized" }, { status: 401 });
-    }
+    const userId = await getSessionUserId();
 
     const body = await req.json();
-    const parsed = updateProfileSchema.safeParse(body);
-
-    if (!parsed.success) {
-      return NextResponse.json(
-        {
-          message: "Validation failed",
-          errors: parsed.error.flatten().fieldErrors,
-        },
-        { status: 400 }
-      );
-    }
+    const parsed = updateProfileSchema.parse(body);
 
     const {
       firstname,
@@ -99,7 +88,7 @@ export async function PATCH(req: Request) {
       accountName,
       accountNumber,
       accountType,
-    } = parsed.data;
+    } = parsed;
 
     const existingUser = await prisma.user.findUnique({
       where: { id: userId },
@@ -115,7 +104,7 @@ export async function PATCH(req: Request) {
     });
 
     if (!existingUser) {
-      return NextResponse.json({ message: "Unauthorized" }, { status: 401 });
+      throw new UnauthorizedError("User account not found");
     }
 
     if (email && email !== existingUser.email) {
@@ -125,10 +114,7 @@ export async function PATCH(req: Request) {
       });
 
       if (emailTaken) {
-        return NextResponse.json(
-          { message: "Email address is already in use" },
-          { status: 409 }
-        );
+        throw new ConflictError("Email address is already in use");
       }
     }
 
@@ -187,13 +173,9 @@ export async function PATCH(req: Request) {
           });
 
           await tx.user.update({
-            where:{
-              id: userId
-            },
-            data:{
-              role: "SELLER"
-            }
-          })
+            where: { id: userId },
+            data: { role: "SELLER" },
+          });
         }
       }
     });
@@ -226,17 +208,13 @@ export async function PATCH(req: Request) {
 
     return NextResponse.json(
       {
+        ok: true,
         message: "Profile updated successfully",
         user: updatedUser,
       },
       { status: 200 }
     );
   } catch (error) {
-    console.error("Error updating profile:", error);
-
-    return NextResponse.json(
-      { message: "Internal server error" },
-      { status: 500 }
-    );
+    return handleRouteError(error);
   }
 }
