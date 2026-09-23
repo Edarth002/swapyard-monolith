@@ -3,10 +3,17 @@ import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { verifyToken } from "@/lib/token";
 import { createReviewSchema, getReviewsSchema } from "./schema";
+import {
+  handleRouteError,
+  UnauthorizedError,
+  ForbiddenError,
+  NotFoundError,
+  AppError,
+} from "@/lib/errors";
 
 export const runtime = "nodejs";
 
-export async function getCookie(req: Request, name: string) {
+async function getCookie(req: Request, name: string) {
   const cookie = req.headers.get("cookie");
   if (!cookie) return null;
 
@@ -18,58 +25,42 @@ export async function getCookie(req: Request, name: string) {
   );
 }
 
+async function getAuthBuyer(req: Request) {
+  const token = await getCookie(req, "session");
+  if (!token) throw new UnauthorizedError("Authentication required");
+
+  const payload = await verifyToken(token);
+  const userId = typeof payload === "string" ? payload : payload?.userId;
+  if (!userId) throw new UnauthorizedError("Invalid or expired session token");
+
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { id: true, role: true },
+  });
+
+  if (!user) throw new UnauthorizedError("User account not found");
+  if (user.role !== "BUYER") {
+    throw new ForbiddenError("Only buyers are permitted to create reviews");
+  }
+
+  return user;
+}
+
 export async function POST(req: Request) {
   try {
-    const token = await getCookie(req, "session");
-
-    if (!token) {
-      return NextResponse.json({ message: "Unauthorized" }, { status: 401 });
-    }
-
-    const { userId } = await verifyToken(token);
-
-    if (!userId) {
-      return NextResponse.json({ message: "Unauthorized" }, { status: 401 });
-    }
-
-    const user = await prisma.user.findUnique({
-      where: { id: userId },
-      select: { id: true, role: true },
-    });
-
-    if (!user) {
-      return NextResponse.json({ message: "User does not exist" }, { status: 404 });
-    }
-
-    if (user.role !== "BUYER") {
-      return NextResponse.json({ message: "User is not authorized" }, { status: 403 });
-    }
+    const user = await getAuthBuyer(req);
 
     const body = await req.json();
-
-    const validatedInput = createReviewSchema.safeParse({
+    const rawInput = {
       rating: body?.rating,
       comment: body?.comment ? String(body.comment).trim() : null,
       sellerId: String(body?.sellerId || "").trim(),
-    });
+    };
 
-    if (!validatedInput.success) {
-      return NextResponse.json(
-        {
-          message: "Input does not meet required schema",
-          errors: validatedInput.error.flatten(),
-        },
-        { status: 400 }
-      );
-    }
-
-    const { rating, comment, sellerId } = validatedInput.data;
+    const { rating, comment, sellerId } = createReviewSchema.parse(rawInput);
 
     if (sellerId === user.id) {
-      return NextResponse.json(
-        { message: "You cannot review yourself" },
-        { status: 400 }
-      );
+      throw new AppError("You cannot review yourself", 400);
     }
 
     const seller = await prisma.user.findUnique({
@@ -78,14 +69,11 @@ export async function POST(req: Request) {
     });
 
     if (!seller) {
-      return NextResponse.json({ message: "Seller not found" }, { status: 404 });
+      throw new NotFoundError("Seller not found");
     }
 
     if (seller.role !== "SELLER") {
-      return NextResponse.json(
-        { message: "Target user is not a seller" },
-        { status: 400 }
-      );
+      throw new AppError("Target user is not a registered seller", 400);
     }
 
     const review = await prisma.review.create({
@@ -96,22 +84,21 @@ export async function POST(req: Request) {
         sellerId,
       },
       include: {
-        buyer: { select: { id: true } },
-        seller: { select: { id: true } },
+        buyer: { select: { id: true, firstname: true, lastname: true } },
+        seller: { select: { id: true, firstname: true, lastname: true } },
       },
     });
 
-    return NextResponse.json({ ok: true, review }, { status: 201 });
-  } catch (err: any) {
-    if (err?.code === "P2002") {
-      return NextResponse.json(
-        { message: "You have already reviewed this seller" },
-        { status: 409 }
-      );
-    }
-
-    console.error(err);
-    return NextResponse.json({ message: "Server error" }, { status: 500 });
+    return NextResponse.json(
+      {
+        ok: true,
+        message: "Review created successfully",
+        review,
+      },
+      { status: 201 }
+    );
+  } catch (err) {
+    return handleRouteError(err);
   }
 }
 
@@ -126,33 +113,22 @@ export async function GET(req: Request) {
       limit: searchParams.get("limit") ?? undefined,
     };
 
-    const validatedQuery = getReviewsSchema.safeParse(rawQuery);
-
-    if (!validatedQuery.success) {
-      return NextResponse.json(
-        {
-          message: "Invalid query parameters",
-          errors: validatedQuery.error.flatten(),
-        },
-        { status: 400 }
-      );
-    }
-
-    const { sellerId, buyerId, page, limit } = validatedQuery.data;
+    // Validates query parameters -> throws ZodError mapped to 400 Bad Request
+    const { sellerId, buyerId, page, limit } = getReviewsSchema.parse(rawQuery);
 
     const skip = (page - 1) * limit;
 
-    const where: Prisma.ReviewWhereInput = {};
-
-    if (sellerId) where.sellerId = sellerId;
-    if (buyerId) where.buyerId = buyerId;
+    const where: Prisma.ReviewWhereInput = {
+      ...(sellerId && { sellerId }),
+      ...(buyerId && { buyerId }),
+    };
 
     const [items, total] = await Promise.all([
       prisma.review.findMany({
         where,
         include: {
-          buyer: { select: { id: true } },
-          seller: { select: { id: true } },
+          buyer: { select: { id: true, firstname: true, lastname: true } },
+          seller: { select: { id: true, firstname: true, lastname: true } },
         },
         orderBy: { createdAt: "desc" },
         skip,
@@ -164,18 +140,17 @@ export async function GET(req: Request) {
     return NextResponse.json(
       {
         ok: true,
-        items,
+        items: items ?? [],
         meta: {
           total,
           page,
           limit,
-          pages: Math.ceil(total / limit),
+          pages: Math.ceil(total / limit) || 0,
         },
       },
       { status: 200 }
     );
   } catch (err) {
-    console.error(err);
-    return NextResponse.json({ message: "Server error" }, { status: 500 });
+    return handleRouteError(err);
   }
 }

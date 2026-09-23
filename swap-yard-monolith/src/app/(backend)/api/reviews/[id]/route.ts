@@ -1,138 +1,169 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { verifyToken } from "@/lib/token";
+import { z } from "zod";
+import {
+  handleRouteError,
+  UnauthorizedError,
+  ForbiddenError,
+  NotFoundError,
+  AppError,
+} from "@/lib/errors";
 
 export const runtime = "nodejs";
 
-export async function getCookie(req: Request, name: string) {
+const updateReviewSchema = z
+  .object({
+    rating: z.coerce.number().int().min(1).max(5).optional(),
+    comment: z
+      .string()
+      .trim()
+      .nullable()
+      .transform((val) => (val === "" ? null : val))
+      .optional(),
+  })
+  .refine(
+    (data) => data.rating !== undefined || data.comment !== undefined,
+    {
+      message: "At least one of 'rating' or 'comment' must be provided",
+    }
+  );
+
+async function getCookie(req: Request, name: string) {
   const cookie = req.headers.get("cookie");
   if (!cookie) return null;
-  return cookie.split("; ").find((c) => c.startsWith(`${name}=`))?.split("=")[1] ?? null;
+  return (
+    cookie
+      .split("; ")
+      .find((c) => c.startsWith(`${name}=`))
+      ?.split("=")[1] ?? null
+  );
 }
 
-export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }) {
+async function getAuthBuyer(req: Request) {
+  const token = await getCookie(req, "session");
+  if (!token) throw new UnauthorizedError("Authentication required");
+
+  const payload = await verifyToken(token);
+  const userId = typeof payload === "string" ? payload : payload?.userId;
+  if (!userId) throw new UnauthorizedError("Invalid or expired session token");
+
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { id: true, role: true },
+  });
+
+  if (!user) throw new UnauthorizedError("User account not found");
+  if (user.role !== "BUYER") {
+    throw new ForbiddenError("Only buyers are authorized for this action");
+  }
+
+  return user;
+}
+
+export async function GET(
+  _req: Request,
+  ctx: { params: Promise<{ id: string }> }
+) {
   try {
     const { id } = await ctx.params;
 
     const review = await prisma.review.findUnique({
       where: { id },
       include: {
-        buyer: { select: { id: true } },
-        seller: { select: { id: true } },
+        buyer: { select: { id: true, firstname: true, lastname: true } },
+        seller: { select: { id: true, firstname: true, lastname: true } },
       },
     });
 
     if (!review) {
-      return NextResponse.json({ message: "Review not found" }, { status: 404 });
+      throw new NotFoundError("Review not found");
     }
 
     return NextResponse.json({ ok: true, review }, { status: 200 });
   } catch (err) {
-    console.error(err);
-    return NextResponse.json({ message: "Server error" }, { status: 500 });
+    return handleRouteError(err);
   }
 }
 
-export async function PUT(req: Request, ctx: { params: Promise<{ id: string }> }) {
+export async function PUT(
+  req: Request,
+  ctx: { params: Promise<{ id: string }> }
+) {
   try {
+    const user = await getAuthBuyer(req);
     const { id } = await ctx.params;
-
-    const token = await getCookie(req, "session");
-    if (!token) return NextResponse.json({ message: "Unauthorized" }, { status: 401 });
-
-    const { userId } = await verifyToken(token);
-    if (!userId) return NextResponse.json({ message: "Unauthorized" }, { status: 401 });
-
-    const user = await prisma.user.findUnique({
-      where: { id: userId },
-      select: { id: true, role: true },
-    });
-
-    if (!user) return NextResponse.json({ message: "User does not exist" }, { status: 404 });
-    if (user.role !== "BUYER") {
-      return NextResponse.json({ message: "User is not authorized" }, { status: 403 });
-    }
 
     const existing = await prisma.review.findUnique({
       where: { id },
       select: { id: true, buyerId: true },
     });
 
-    if (!existing) return NextResponse.json({ message: "Review not found" }, { status: 404 });
+    if (!existing) {
+      throw new NotFoundError("Review not found");
+    }
+
     if (existing.buyerId !== user.id) {
-      return NextResponse.json({ message: "Forbidden" }, { status: 403 });
+      throw new ForbiddenError("You do not have permission to edit this review");
     }
 
     const body = await req.json();
-    const ratingRaw = body?.rating;
-    const commentRaw = body?.comment;
-
-    const data: any = {};
-
-    if (ratingRaw !== undefined) {
-      const rating = Number(ratingRaw);
-      if (Number.isNaN(rating) || rating < 1 || rating > 5) {
-        return NextResponse.json({ message: "Invalid rating" }, { status: 400 });
-      }
-      data.rating = rating;
-    }
-
-    if (commentRaw !== undefined) {
-      const comment = commentRaw === null ? null : String(commentRaw).trim();
-      data.comment = comment;
-    }
+    // Validates and coerces payload -> ZodError triggers 400 Bad Request
+    const validatedData = updateReviewSchema.parse(body);
 
     const review = await prisma.review.update({
       where: { id },
-      data,
+      data: validatedData,
       include: {
-        buyer: { select: { id: true } },
-        seller: { select: { id: true } },
+        buyer: { select: { id: true, firstname: true, lastname: true } },
+        seller: { select: { id: true, firstname: true, lastname: true } },
       },
     });
 
-    return NextResponse.json({ ok: true, review }, { status: 200 });
+    return NextResponse.json(
+      {
+        ok: true,
+        message: "Review updated successfully",
+        review,
+      },
+      { status: 200 }
+    );
   } catch (err) {
-    console.error(err);
-    return NextResponse.json({ message: "Server error" }, { status: 500 });
+    return handleRouteError(err);
   }
 }
 
-export async function DELETE(req: Request, ctx: { params: Promise<{ id: string }> }) {
+export async function DELETE(
+  req: Request,
+  ctx: { params: Promise<{ id: string }> }
+) {
   try {
+    const user = await getAuthBuyer(req);
     const { id } = await ctx.params;
-
-    const token = await getCookie(req, "session");
-    if (!token) return NextResponse.json({ message: "Unauthorized" }, { status: 401 });
-
-    const { userId } = await verifyToken(token);
-    if (!userId) return NextResponse.json({ message: "Unauthorized" }, { status: 401 });
-
-    const user = await prisma.user.findUnique({
-      where: { id: userId },
-      select: { id: true, role: true },
-    });
-
-    if (!user) return NextResponse.json({ message: "User does not exist" }, { status: 404 });
-    if (user.role !== "BUYER") {
-      return NextResponse.json({ message: "User is not authorized" }, { status: 403 });
-    }
 
     const existing = await prisma.review.findUnique({
       where: { id },
       select: { id: true, buyerId: true },
     });
 
-    if (!existing) return NextResponse.json({ message: "Review not found" }, { status: 404 });
+    if (!existing) {
+      throw new NotFoundError("Review not found");
+    }
+
     if (existing.buyerId !== user.id) {
-      return NextResponse.json({ message: "Forbidden" }, { status: 403 });
+      throw new ForbiddenError("You do not have permission to delete this review");
     }
 
     await prisma.review.delete({ where: { id } });
 
-    return NextResponse.json({ ok: true }, { status: 200 });
+    return NextResponse.json(
+      {
+        ok: true,
+        message: "Review deleted successfully",
+      },
+      { status: 200 }
+    );
   } catch (err) {
-    console.error(err);
-    return NextResponse.json({ message: "Server error" }, { status: 500 });
+    return handleRouteError(err);
   }
 }
