@@ -1,69 +1,82 @@
 import { NextResponse } from "next/server";
 import crypto from "crypto";
 import { prisma } from "@/lib/prisma";
+import { handleRouteError, UnauthorizedError, AppError } from "@/lib/errors";
 
 export const runtime = "nodejs";
 
 export async function POST(req: Request) {
-  const rawBody = await req.text();
-  const signature = req.headers.get("x-paystack-signature");
-
-  const expectedSignature = crypto
-    .createHmac("sha512", process.env.PAYSTACK_SECRET_KEY!)
-    .update(rawBody)
-    .digest("hex");
-
-  if (!signature || signature !== expectedSignature) {
-    console.error("[Paystack webhook] Invalid signature");
-    return NextResponse.json({ message: "Invalid signature" }, { status: 401 });
-  }
-
-  let event: any;
   try {
-    event = JSON.parse(rawBody);
-  } catch {
-    return NextResponse.json({ message: "Invalid payload" }, { status: 400 });
-  }
+    const rawBody = await req.text();
+    const signature = req.headers.get("x-paystack-signature");
+    const secretKey = process.env.PAYSTACK_SECRET_KEY;
 
-  // Always 200 past this point — Paystack retries aggressively on non-2xx,
-  // and any real problem below is ours to fix, not something a retry solves.
-  if (event.event !== "charge.success") {
-    return NextResponse.json({ received: true }, { status: 200 });
-  }
+    if (!secretKey) {
+      console.error("[Paystack Webhook] PAYSTACK_SECRET_KEY is not defined");
+      throw new AppError("Internal configuration error", 500);
+    }
 
-  const { reference, amount, metadata } = event.data ?? {};
-  const paymentId = metadata?.paymentId;
-  const orderId = metadata?.orderId;
+    const expectedSignature = crypto
+      .createHmac("sha512", secretKey)
+      .update(rawBody)
+      .digest("hex");
 
-  if (!paymentId || !orderId) {
-    console.error("[Paystack webhook] Missing metadata on event", event.data);
-    return NextResponse.json({ received: true }, { status: 200 });
-  }
+    if (!signature || signature !== expectedSignature) {
+      throw new UnauthorizedError("Invalid webhook signature");
+    }
 
-  try {
-    const payment = await prisma.payment.findUnique({ where: { id: paymentId } });
+    let event: any;
+    try {
+      event = JSON.parse(rawBody);
+    } catch {
+      throw new AppError("Invalid webhook payload format", 400);
+    }
+
+    // Always return 200 for non-charge events or malformed payload metadata
+    // to prevent Paystack from aggressively hammering retries on unsupported hooks.
+    if (event.event !== "charge.success") {
+      return NextResponse.json({ ok: true, received: true }, { status: 200 });
+    }
+
+    const { reference, amount, metadata } = event.data ?? {};
+    const paymentId = metadata?.paymentId;
+    const orderId = metadata?.orderId;
+
+    if (!paymentId || !orderId) {
+      console.error("[Paystack Webhook] Missing metadata on event:", event.data);
+      return NextResponse.json({ ok: true, received: true }, { status: 200 });
+    }
+
+    const payment = await prisma.payment.findUnique({
+      where: { id: paymentId },
+      select: { id: true, amount: true, status: true },
+    });
 
     if (!payment) {
-      console.error("[Paystack webhook] Payment not found:", paymentId);
-      return NextResponse.json({ received: true }, { status: 200 });
+      console.error("[Paystack Webhook] Payment not found:", paymentId);
+      return NextResponse.json({ ok: true, received: true }, { status: 200 });
     }
 
-    // Idempotency guard — Paystack can and does deliver the same webhook more than once, and this also covers the case where /api/payments/verify already processed this same payment from the callback redirect.
+    // Idempotency check: Ignore duplicate delivery or orders processed via client verification
     if (payment.status === "SUCCESS") {
-      return NextResponse.json({ received: true }, { status: 200 });
+      return NextResponse.json({ ok: true, received: true }, { status: 200 });
     }
 
-    // Sanity check the amount actually paid matches what we expected
     const expectedKobo = Math.round(payment.amount * 100);
     if (amount !== expectedKobo) {
-      console.error("[Paystack webhook] Amount mismatch", { expectedKobo, received: amount, paymentId });
-      return NextResponse.json({ received: true }, { status: 200 });
+      console.error("[Paystack Webhook] Amount mismatch", {
+        expectedKobo,
+        received: amount,
+        paymentId,
+      });
+      return NextResponse.json({ ok: true, received: true }, { status: 200 });
     }
 
     await prisma.$transaction([
       prisma.payment.update({
-        where: { id: paymentId ,
-        status: {not: "SUCCESS"} //This flags against double processing of the same payment, if the status is already SUCCESS, it will not update again
+        where: {
+          id: paymentId,
+          status: { not: "SUCCESS" },
         },
         data: {
           status: "SUCCESS",
@@ -77,9 +90,8 @@ export async function POST(req: Request) {
       }),
     ]);
 
-    return NextResponse.json({ received: true }, { status: 200 });
+    return NextResponse.json({ ok: true, received: true }, { status: 200 });
   } catch (error) {
-    console.error("[Paystack webhook] Processing error:", error);
-    return NextResponse.json({ received: true }, { status: 200 });
+    return handleRouteError(error);
   }
 }

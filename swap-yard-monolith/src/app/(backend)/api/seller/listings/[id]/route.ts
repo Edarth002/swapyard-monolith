@@ -8,6 +8,13 @@ import { prisma } from "@/lib/prisma";
 import { verifyToken } from "@/lib/token";
 import { updateListingSchema } from "../../../listings/schema";
 import { createSlug } from "@/lib/slugGenerator";
+import {
+  handleRouteError,
+  UnauthorizedError,
+  ForbiddenError,
+  NotFoundError,
+  AppError,
+} from "@/lib/errors";
 
 export const runtime = "nodejs";
 
@@ -31,43 +38,23 @@ function toNullableString(value: FormDataEntryValue | null) {
 
 async function getAuthenticatedSeller(req: Request) {
   const token = await getCookie(req, "session");
-
-  if (!token) {
-    return {
-      error: NextResponse.json({ message: "Unauthorized" }, { status: 401 }),
-    };
-  }
+  if (!token) throw new UnauthorizedError("Authentication required");
 
   const payload = await verifyToken(token);
   const userId = typeof payload === "string" ? payload : payload?.userId;
-
-  if (!userId) {
-    return {
-      error: NextResponse.json({ message: "Unauthorized" }, { status: 401 }),
-    };
-  }
+  if (!userId) throw new UnauthorizedError("Invalid or expired session token");
 
   const user = await prisma.user.findUnique({
     where: { id: userId },
     select: { id: true, role: true },
   });
 
-  if (!user) {
-    return {
-      error: NextResponse.json({ message: "User does not exist" }, { status: 404 }),
-    };
-  }
-
+  if (!user) throw new UnauthorizedError("User account not found");
   if (user.role !== "SELLER") {
-    return {
-      error: NextResponse.json(
-        { message: "User is not authorized" },
-        { status: 403 }
-      ),
-    };
+    throw new ForbiddenError("Only sellers can manage listings");
   }
 
-  return { user };
+  return user;
 }
 
 export async function GET(
@@ -76,13 +63,12 @@ export async function GET(
 ) {
   try {
     const { id } = await ctx.params;
-    const auth = await getAuthenticatedSeller(req);
-    if ("error" in auth) return auth.error;
+    const user = await getAuthenticatedSeller(req);
 
     const listing = await prisma.listing.findFirst({
       where: {
         id,
-        sellerId: auth.user.id,
+        sellerId: user.id,
       },
       include: {
         images: true,
@@ -91,13 +77,21 @@ export async function GET(
     });
 
     if (!listing) {
-      return NextResponse.json({ message: "Listing not found" }, { status: 404 });
+      throw new NotFoundError("Listing not found");
     }
 
-    return NextResponse.json({ ok: true, listing }, { status: 200 });
+    return NextResponse.json(
+      {
+        ok: true,
+        listing: {
+          ...listing,
+          images: listing.images ?? [],
+        },
+      },
+      { status: 200 }
+    );
   } catch (err) {
-    console.error("Error fetching seller listing:", err);
-    return NextResponse.json({ message: "Server error" }, { status: 500 });
+    return handleRouteError(err);
   }
 }
 
@@ -109,10 +103,7 @@ export async function PATCH(
 
   try {
     const { id } = await ctx.params;
-
-    const auth = await getAuthenticatedSeller(req);
-    if ("error" in auth) return auth.error;
-    const { user } = auth;
+    const user = await getAuthenticatedSeller(req);
 
     const existing = await prisma.listing.findFirst({
       where: {
@@ -123,7 +114,7 @@ export async function PATCH(
     });
 
     if (!existing) {
-      return NextResponse.json({ message: "Listing not found" }, { status: 404 });
+      throw new NotFoundError("Listing not found");
     }
 
     const formData = await req.formData();
@@ -167,18 +158,6 @@ export async function PATCH(
           : false,
     };
 
-    const validatedInput = updateListingSchema.safeParse(rawInput);
-
-    if (!validatedInput.success) {
-      return NextResponse.json(
-        {
-          message: "Input does not meet required schema",
-          errors: validatedInput.error.flatten().fieldErrors,
-        },
-        { status: 400 }
-      );
-    }
-
     const {
       name,
       description,
@@ -192,7 +171,7 @@ export async function PATCH(
       contact,
       categoryId,
       replaceImages,
-    } = validatedInput.data;
+    } = updateListingSchema.parse(rawInput);
 
     const data: Prisma.ListingUpdateInput = {};
 
@@ -213,8 +192,14 @@ export async function PATCH(
 
       const slugTaken = async (candidate: string) => {
         const [liveMatch, historyMatch] = await Promise.all([
-          prisma.listing.findUnique({ where: { slug: candidate } }),
-          prisma.listingSlugHistory.findFirst({ where: { slug: candidate } }),
+          prisma.listing.findUnique({
+            where: { slug: candidate },
+            select: { id: true },
+          }),
+          prisma.listingSlugHistory.findFirst({
+            where: { slug: candidate },
+            select: { id: true },
+          }),
         ]);
         const liveConflict = liveMatch && liveMatch.id !== existing.id;
         return Boolean(liveConflict || historyMatch);
@@ -242,10 +227,7 @@ export async function PATCH(
         });
 
         if (!categoryExists) {
-          return NextResponse.json(
-            { message: "Selected category does not exist" },
-            { status: 400 }
-          );
+          throw new AppError("Selected category does not exist", 400);
         }
 
         data.category = { connect: { id: categoryId } };
@@ -256,9 +238,7 @@ export async function PATCH(
 
     const images = formData
       .getAll("images")
-      .filter(
-        (file): file is File => file instanceof File && file.size > 0
-      );
+      .filter((file): file is File => file instanceof File && file.size > 0);
 
     if (images.length > 0) {
       newlyUploaded = await uploadManyImageFiles(images, {
@@ -310,25 +290,27 @@ export async function PATCH(
         .filter((oldId): oldId is string => Boolean(oldId));
 
       if (oldPublicIds.length) {
-        await deleteManyByPublicIds(oldPublicIds);
+        await deleteManyByPublicIds(oldPublicIds).catch(() => null);
       }
     }
 
     return NextResponse.json(
-      { message: "Listing updated successfully", listing },
+      {
+        ok: true,
+        message: "Listing updated successfully",
+        listing,
+      },
       { status: 200 }
     );
   } catch (err) {
-    console.error("Error updating listing:", err);
-
     if (newlyUploaded.length) {
       const ids = newlyUploaded.map((img) => img.public_id).filter(Boolean);
       if (ids.length) {
-        await deleteManyByPublicIds(ids);
+        await deleteManyByPublicIds(ids).catch(() => null);
       }
     }
 
-    return NextResponse.json({ message: "Server error" }, { status: 500 });
+    return handleRouteError(err);
   }
 }
 
@@ -338,20 +320,18 @@ export async function DELETE(
 ) {
   try {
     const { id } = await ctx.params;
-
-    const auth = await getAuthenticatedSeller(req);
-    if ("error" in auth) return auth.error;
-    const { user } = auth;
+    const user = await getAuthenticatedSeller(req);
 
     const existing = await prisma.listing.findFirst({
       where: {
         id,
         sellerId: user.id,
       },
+      select: { id: true },
     });
 
     if (!existing) {
-      return NextResponse.json({ message: "Listing not found" }, { status: 404 });
+      throw new NotFoundError("Listing not found");
     }
 
     const listing = await prisma.$transaction(async (tx) => {
@@ -366,11 +346,14 @@ export async function DELETE(
     });
 
     return NextResponse.json(
-      { message: "Listing removed successfully", listing },
+      {
+        ok: true,
+        message: "Listing removed successfully",
+        listing,
+      },
       { status: 200 }
     );
   } catch (err) {
-    console.error("Error removing listing:", err);
-    return NextResponse.json({ message: "Server error" }, { status: 500 });
+    return handleRouteError(err);
   }
 }
