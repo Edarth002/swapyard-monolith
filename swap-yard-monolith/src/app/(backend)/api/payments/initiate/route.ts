@@ -73,12 +73,29 @@ export async function POST(req: Request) {
     }
 
     const amountInKobo = Math.round(order.totalAmount * 100);
-    
-    const reference = `${order.payment.id}-${Date.now()}`;
 
-    await prisma.payment.update({
-      where: { id: order.payment.id },
-      data: { providerRef: reference },
+    // Row-level lock on the Payment record
+    const reference = await prisma.$transaction(async (tx) => {
+      const [locked] = await tx.$queryRaw<{ status: string }[]>`
+        SELECT status FROM Payment WHERE id = ${order.payment!.id} FOR UPDATE
+      `;
+
+      if (!locked) {
+        throw new AppError("No payment record found for this order", 400);
+      }
+
+      if (locked.status === "SUCCESS") {
+        throw new AppError("This order has already been paid for", 409);
+      }
+
+      const ref = `${order.payment!.id}-${Date.now()}`;
+
+      await tx.payment.update({
+        where: { id: order.payment!.id },
+        data: { providerRef: ref },
+      });
+
+      return ref;
     });
 
     const baseUrl = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
