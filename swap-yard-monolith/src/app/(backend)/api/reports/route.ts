@@ -1,8 +1,17 @@
 import { NextResponse } from "next/server";
-import { deleteManyByPublicIds, uploadManyImageFiles } from "@/app/(backend)/utils/cloudinary";
+import {
+  deleteManyByPublicIds,
+  uploadManyImageFiles,
+} from "@/app/(backend)/utils/cloudinary";
 import { prisma } from "@/lib/prisma";
 import { verifyToken } from "@/lib/token";
 import { createReportSchema, getReportsSchema } from "./schema";
+import {
+  handleRouteError,
+  UnauthorizedError,
+  NotFoundError,
+  AppError,
+} from "@/lib/errors";
 
 export const runtime = "nodejs";
 
@@ -17,6 +26,23 @@ async function getCookie(req: Request, name: string) {
   );
 }
 
+async function getAuthenticatedUser(req: Request) {
+  const token = await getCookie(req, "session");
+  if (!token) throw new UnauthorizedError("Authentication required");
+
+  const payload = await verifyToken(token);
+  const userId = typeof payload === "string" ? payload : payload?.userId;
+  if (!userId) throw new UnauthorizedError("Invalid or expired session token");
+
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { id: true, role: true },
+  });
+
+  if (!user) throw new UnauthorizedError("User account not found");
+  return user;
+}
+
 function toNullableString(value: FormDataEntryValue | null) {
   const parsed = String(value || "").trim();
   return parsed ? parsed : null;
@@ -25,34 +51,33 @@ function toNullableString(value: FormDataEntryValue | null) {
 export async function POST(req: Request) {
   const idempotencyKey = req.headers.get("idempotency-key");
   if (!idempotencyKey) {
-    return NextResponse.json({ message: "Idempotency-Key header is required" }, { status: 400 });
+    return handleRouteError(
+      new AppError("Idempotency-Key header is required", 400)
+    );
   }
 
   let uploaded: Array<{ url: string; public_id: string }> = [];
 
   try {
-    const token = await getCookie(req, "session");
-    if (!token) return NextResponse.json({ message: "Unauthorized" }, { status: 401 });
-
-    const payload = await verifyToken(token);
-    const userId = typeof payload === "string" ? payload : payload?.userId;
-    if (!userId) return NextResponse.json({ message: "Unauthorized" }, { status: 401 });
-
-    const user = await prisma.user.findUnique({
-      where: { id: userId },
-      select: { id: true, role: true },
-    });
-
-    if (!user) {
-      return NextResponse.json({ message: "Unauthorized" }, { status: 401 });
-    }
+    const user = await getAuthenticatedUser(req);
 
     const existingReport = await prisma.report.findUnique({
       where: { idempotencyKey },
+      include: {
+        reporter: { select: { id: true, firstname: true, lastname: true } },
+        listing: { select: { id: true, name: true, slug: true } },
+      },
     });
 
     if (existingReport) {
-      return NextResponse.json({ message: "Report already submitted", report: existingReport }, { status: 200 });
+      return NextResponse.json(
+        {
+          ok: true,
+          message: "Report already submitted",
+          report: existingReport,
+        },
+        { status: 200 }
+      );
     }
 
     const formData = await req.formData();
@@ -63,36 +88,37 @@ export async function POST(req: Request) {
       comment: toNullableString(formData.get("comment")),
     };
 
-    const validatedInput = createReportSchema.safeParse(rawInput);
-    if (!validatedInput.success) {
-      return NextResponse.json({
-        message: "Validation Error",
-        errors: validatedInput.error.flatten().fieldErrors,
-      }, { status: 400 });
-    }
+    const validatedData = createReportSchema.parse(rawInput);
 
     const listingExists = await prisma.listing.findUnique({
-      where: { id: validatedInput.data.listingId },
+      where: { id: validatedData.listingId },
+      select: { id: true },
     });
+
     if (!listingExists) {
-      return NextResponse.json({ message: "Listing not found" }, { status: 404 });
+      throw new NotFoundError("Listing not found");
     }
 
-    const images = formData.getAll("images").filter((file): file is File => file instanceof File && file.size > 0);
+    const images = formData
+      .getAll("images")
+      .filter((file): file is File => file instanceof File && file.size > 0);
+
     if (images.length > 2) {
-      return NextResponse.json({ message: "A maximum of 2 images is allowed" }, { status: 400 });
+      throw new AppError("A maximum of 2 images is allowed", 400);
     }
 
-    uploaded = images.length ? await uploadManyImageFiles(images, { subfolder: "reports" }) : [];
+    uploaded = images.length
+      ? await uploadManyImageFiles(images, { subfolder: "reports" })
+      : [];
 
     const report = await prisma.report.create({
       data: {
         idempotencyKey,
         reporterId: user.id,
-        listingId: validatedInput.data.listingId,
-        type: validatedInput.data.type,
-        reason: validatedInput.data.reason,
-        comment: validatedInput.data.comment,
+        listingId: validatedData.listingId,
+        type: validatedData.type,
+        reason: validatedData.reason,
+        comment: validatedData.comment,
         imageUrl1: uploaded?.[0]?.url ?? null,
         imagePublicId1: uploaded?.[0]?.public_id ?? null,
         imageUrl2: uploaded?.[1]?.url ?? null,
@@ -104,45 +130,37 @@ export async function POST(req: Request) {
       },
     });
 
-    return NextResponse.json({ message: "Report submitted successfully", report }, { status: 201 });
-  } catch (err: any) {
-    if (uploaded?.length > 0) {
-      await deleteManyByPublicIds(uploaded.map((img) => img.public_id)).catch(console.error);
+    return NextResponse.json(
+      {
+        ok: true,
+        message: "Report submitted successfully",
+        report,
+      },
+      { status: 201 }
+    );
+  } catch (err) {
+    if (uploaded.length > 0) {
+      const publicIds = uploaded.map((img) => img.public_id);
+      await deleteManyByPublicIds(publicIds).catch(() => null);
     }
-    console.error("Error creating report:", err);
-    return NextResponse.json({ message: err.message || "Server Error" }, { status: 500 });
+    return handleRouteError(err);
   }
 }
 
 export async function GET(req: Request) {
   try {
-    const token = await getCookie(req, "session");
-    if (!token) return NextResponse.json({ message: "Unauthorized" }, { status: 401 });
-
-    const payload = await verifyToken(token);
-    const userId = typeof payload === "string" ? payload : payload?.userId;
-    if (!userId) return NextResponse.json({ message: "Unauthorized" }, { status: 401 });
-
-    const user = await prisma.user.findUnique({
-      where: { id: userId },
-      select: { id: true, role: true },
-    });
-    if (!user) return NextResponse.json({ message: "Unauthorized" }, { status: 401 });
-
+    const user = await getAuthenticatedUser(req);
     const { searchParams } = new URL(req.url);
+
     const rawParams = {
-      page: searchParams.get("page"),
-      limit: searchParams.get("limit"),
-      status: searchParams.get("status"),
-      type: searchParams.get("type"),
+      page: searchParams.get("page") ?? undefined,
+      limit: searchParams.get("limit") ?? undefined,
+      status: searchParams.get("status") ?? undefined,
+      type: searchParams.get("type") ?? undefined,
     };
 
-    const validatedParams = getReportsSchema.safeParse(rawParams);
-    if (!validatedParams.success) {
-      return NextResponse.json({ message: "Bad Request" }, { status: 400 });
-    }
-
-    const { page, limit, status, type } = validatedParams.data;
+    // Parse query params directly -> auto-mapped to 400 on schema violation
+    const { page, limit, status, type } = getReportsSchema.parse(rawParams);
     const skip = (page - 1) * limit;
 
     const where = {
@@ -165,17 +183,20 @@ export async function GET(req: Request) {
       prisma.report.count({ where }),
     ]);
 
-    return NextResponse.json({
-      ok: true,
-      items: reports,
-      meta: {
-        total,
-        page,
-        pages: Math.ceil(total / limit),
+    return NextResponse.json(
+      {
+        ok: true,
+        items: reports ?? [],
+        meta: {
+          total,
+          page,
+          limit,
+          pages: Math.ceil(total / limit) || 0,
+        },
       },
-    });
-  } catch (err: any) {
-    console.error("Error fetching reports:", err);
-    return NextResponse.json({ message: "Server Error" }, { status: 500 });
+      { status: 200 }
+    );
+  } catch (err) {
+    return handleRouteError(err);
   }
 }
