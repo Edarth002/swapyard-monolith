@@ -1,8 +1,20 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { verifyToken } from "@/lib/token";
+import { z } from "zod";
+import {
+  handleRouteError,
+  UnauthorizedError,
+  ForbiddenError,
+  NotFoundError,
+  AppError,
+} from "@/lib/errors";
 
 export const runtime = "nodejs";
+
+const initiatePaymentSchema = z.object({
+  orderId: z.string().trim().min(1, "orderId is required"),
+});
 
 function getCookie(req: Request, name: string): string | null {
   const cookie = req.headers.get("cookie");
@@ -13,31 +25,31 @@ function getCookie(req: Request, name: string): string | null {
 }
 
 async function getUser(req: Request) {
-  try {
-    const token = getCookie(req, "session");
-    if (!token) return null;
-    const payload = await verifyToken(token);
-    const userId = typeof payload === "string" ? payload : payload?.userId;
-    if (!userId) return null;
-    return prisma.user.findUnique({ where: { id: userId, role: "BUYER" } });
-  } catch {
-    return null;
+  const token = getCookie(req, "session");
+  if (!token) throw new UnauthorizedError("Authentication required");
+
+  const payload = await verifyToken(token);
+  const userId = typeof payload === "string" ? payload : payload?.userId;
+  if (!userId) throw new UnauthorizedError("Invalid or expired session token");
+
+  const user = await prisma.user.findUnique({
+    where: { id: userId, role: "BUYER" },
+    select: { id: true, email: true },
+  });
+
+  if (!user) {
+    throw new UnauthorizedError("Buyer authentication required");
   }
+
+  return user;
 }
 
 export async function POST(req: Request) {
   try {
     const user = await getUser(req);
-    if (!user) {
-      return NextResponse.json({ ok: false, message: "Unauthorized" }, { status: 401 });
-    }
 
     const body = await req.json();
-    const orderId = body?.orderId;
-
-    if (!orderId || typeof orderId !== "string") {
-      return NextResponse.json({ ok: false, message: "orderId is required" }, { status: 400 });
-    }
+    const { orderId } = initiatePaymentSchema.parse(body);
 
     const order = await prisma.order.findUnique({
       where: { id: orderId },
@@ -45,41 +57,31 @@ export async function POST(req: Request) {
     });
 
     if (!order) {
-      return NextResponse.json({ ok: false, message: "Order not found" }, { status: 404 });
+      throw new NotFoundError("Order not found");
     }
 
     if (order.buyerId !== user.id) {
-      return NextResponse.json({ ok: false, message: "Forbidden" }, { status: 403 });
+      throw new ForbiddenError("You do not have access to pay for this order");
     }
 
     if (order.status !== "PENDING_PAYMENT") {
-      return NextResponse.json(
-        { ok: false, message: "This order is not awaiting payment" },
-        { status: 400 }
-      );
+      throw new AppError("This order is not awaiting payment", 400);
     }
 
     if (!order.payment) {
-      return NextResponse.json(
-        { ok: false, message: "No payment record found for this order" },
-        { status: 400 }
-      );
+      throw new AppError("No payment record found for this order", 400);
     }
 
     const amountInKobo = Math.round(order.totalAmount * 100);
-    // Reference is regenerated on every initiate call — Paystack rejects
-    // reusing a reference that's already been sent to /transaction/initialize.
-    // paymentId is carried in metadata so verification/webhooks can still
-    // resolve this back to the right Payment/Order without depending on the
-    // reference format.
+    
     const reference = `${order.payment.id}-${Date.now()}`;
-
 
     await prisma.payment.update({
       where: { id: order.payment.id },
       data: { providerRef: reference },
     });
 
+    const baseUrl = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
     const paystackRes = await fetch("https://api.paystack.co/transaction/initialize", {
       method: "POST",
       headers: {
@@ -91,7 +93,7 @@ export async function POST(req: Request) {
         amount: amountInKobo,
         currency: "NGN",
         reference,
-        callback_url: `${process.env.NEXT_PUBLIC_APP_URL}/payment/success`,
+        callback_url: `${baseUrl}/payment/success`,
         metadata: {
           orderId: order.id,
           paymentId: order.payment.id,
@@ -103,10 +105,7 @@ export async function POST(req: Request) {
 
     if (!paystackRes.ok || !paystackData.status) {
       console.error("[Paystack initialize] API error:", paystackData);
-      return NextResponse.json(
-        { ok: false, message: paystackData?.message ?? "Paystack error" },
-        { status: paystackRes.status || 502 }
-      );
+      throw new AppError(paystackData?.message ?? "Paystack payment initialization failed", 502);
     }
 
     return NextResponse.json(
@@ -120,7 +119,6 @@ export async function POST(req: Request) {
       { status: 200 }
     );
   } catch (error) {
-    console.error("[Payments initiate] Unexpected error:", error);
-    return NextResponse.json({ ok: false, message: "Internal server error" }, { status: 500 });
+    return handleRouteError(error);
   }
 }
