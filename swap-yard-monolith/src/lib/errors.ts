@@ -65,7 +65,13 @@ export function handleRouteError(error: unknown) {
   if (error instanceof Prisma.PrismaClientKnownRequestError) {
     // P2002: Unique constraint violation (duplicate email, duplicate slug) -> 409 Conflict
     if (error.code === "P2002") {
-      const target = (error.meta?.target as string[])?.join(", ") || "field";
+      let target = "resource";
+      if (Array.isArray(error.meta?.target)) {
+        target = error.meta.target.join(", ");
+      } else if (typeof error.meta?.target === "string") {
+        target = error.meta.target.replace(/.*_([^_]+)_(?:key|unique)$/i, "$1");
+      }
+
       return NextResponse.json(
         {
           ok: false,
@@ -101,7 +107,7 @@ export function handleRouteError(error: unknown) {
     }
   }
 
-  // Fallback / Unhandled Errors -> 500 Sanitized
+
   console.error("❌ [Unhandled Route Error]:", error);
 
   return NextResponse.json(

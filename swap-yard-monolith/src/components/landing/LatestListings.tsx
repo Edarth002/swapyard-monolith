@@ -31,7 +31,7 @@ export const LatestListings = () => {
             rating: 4.8,     
             reviewsCount: 12,
           }));
-          setListings(mappedData.filter((item: any) => item.status !== "SOLD"));
+          setListings(mappedData.filter((item: any) => item.status === "AVAILABLE"));
         }
       } catch (error) {
         console.error("Error fetching latest listings:", error);

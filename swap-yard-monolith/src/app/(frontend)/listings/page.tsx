@@ -169,7 +169,7 @@ function ListingsContent() {
         const alldata = await res.json();
 
         const filteredItems = alldata.items.filter(
-          (item: any) => item.status !== "SOLD"
+          (item: any) => item.status === "AVAILABLE" 
         );
 
         const mappedData = filteredItems.map((item: any, index: number) => {

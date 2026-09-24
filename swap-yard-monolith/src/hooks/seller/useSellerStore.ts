@@ -163,7 +163,7 @@ export function useSellerStore() {
             setIsDeleting(true);
             setError("");
 
-            const res = await fetch(`/api/listings/${itemToDelete}`, {
+            const res = await fetch(`/api/seller/listings/${itemToDelete}`, {
                 method: "DELETE",
                 credentials: "include",
             });
