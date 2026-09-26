@@ -9,8 +9,13 @@ import {
 import { updateCategorySchema } from "../../../categories/schema";
 import { createCategorySlug } from "@/lib/slugGenerator";
 import { handleRouteError, UnauthorizedError, NotFoundError } from "@/lib/errors";
+import { z } from "zod";
 
 export const runtime = "nodejs";
+
+const idParamSchema = z.object({
+  id: z.string().trim().cuid({ message: "Invalid category ID format" }),
+});
 
 async function getCookie(req: Request, name: string) {
   const cookie = req.headers.get("cookie");
@@ -50,13 +55,12 @@ export async function PATCH(
   let uploadedImage: any = null;
 
   try {
-    const admin = await getAdmin(req);
+    const { id } = idParamSchema.parse(await ctx.params);
 
+    const admin = await getAdmin(req);
     if (!admin) {
       throw new UnauthorizedError();
     }
-
-    const { id } = await ctx.params;
 
     const existing = await prisma.category.findUnique({
       where: { id },
@@ -74,7 +78,6 @@ export async function PATCH(
           ? String(formData.get("name")).trim()
           : undefined,
     };
-
 
     const { name } = updateCategorySchema.parse(rawInput);
 
