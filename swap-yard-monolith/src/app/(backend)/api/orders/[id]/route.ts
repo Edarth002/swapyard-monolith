@@ -9,8 +9,13 @@ import {
   NotFoundError,
   AppError,
 } from "@/lib/errors";
+import { z } from "zod";
 
 export const runtime = "nodejs";
+
+const idParamSchema = z.object({
+  id: z.string().trim().cuid({ message: "Invalid order ID format" }),
+});
 
 async function getCookie(req: Request, name: string) {
   const cookie = req.headers.get("cookie");
@@ -47,8 +52,9 @@ export async function GET(
   ctx: { params: Promise<{ id: string }> }
 ) {
   try {
+    const { id } = idParamSchema.parse(await ctx.params);
+
     const user = await getAuthenticatedUser(req);
-    const { id } = await ctx.params;
 
     const order = await prisma.order.findUnique({
       where: { id },
@@ -100,12 +106,11 @@ export async function PATCH(
   ctx: { params: Promise<{ id: string }> }
 ) {
   try {
-    const user = await getAuthenticatedUser(req);
-    const { id } = await ctx.params;
+    const { id } = idParamSchema.parse(await ctx.params);
     const body = await req.json();
-
-    // Direct parse: invalid payloads throw ZodError -> auto-mapped to 400 Bad Request
     const { status: newStatus } = updateOrderSchema.parse(body);
+
+    const user = await getAuthenticatedUser(req);
 
     const existingOrder = await prisma.order.findFirst({
       where: {

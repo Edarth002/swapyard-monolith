@@ -7,8 +7,13 @@ import {
   ForbiddenError,
   NotFoundError,
 } from "@/lib/errors";
+import { z } from "zod";
 
 export const runtime = "nodejs";
+
+const idParamSchema = z.object({
+  id: z.string().trim().cuid({ message: "Invalid notification ID format" }),
+});
 
 async function getCookie(req: Request, name: string) {
   const cookie = req.headers.get("cookie");
@@ -43,8 +48,9 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const { id } = idParamSchema.parse(await params);
+
     const user = await getAuthUser(req);
-    const { id } = await params;
 
     const notification = await prisma.notification.findUnique({
       where: { id },
@@ -69,8 +75,9 @@ export async function PATCH(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const { id } = idParamSchema.parse(await params);
+
     const user = await getAuthUser(req);
-    const { id } = await params;
 
     const notification = await prisma.notification.findUnique({
       where: { id },

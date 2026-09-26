@@ -9,8 +9,13 @@ import {
   NotFoundError,
   AppError,
 } from "@/lib/errors";
+import { z } from "zod";
 
 export const runtime = "nodejs";
+
+const idParamSchema = z.object({
+  id: z.string().trim().cuid({ message: "Invalid report ID format" }),
+});
 
 async function getCookie(req: Request, name: string) {
   const cookie = req.headers.get("cookie");
@@ -70,8 +75,9 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const { id } = idParamSchema.parse(await params);
+
     const user = await getAuthenticatedUser(req);
-    const { id } = await params;
 
     const report = await prisma.report.findUnique({
       where: { id },
@@ -100,17 +106,15 @@ export async function PATCH(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const { id } = idParamSchema.parse(await params);
+    const body = await req.json();
+    const { status } = updateReportStatusSchema.parse(body);
+
     const user = await getAuthenticatedUser(req);
 
     if (user.role !== "ADMIN") {
       throw new ForbiddenError("Admin access required to update report status");
     }
-
-    const { id } = await params;
-    const body = await req.json();
-
-    // Throws ZodError directly -> automatically mapped to 400 Bad Request
-    const { status } = updateReportStatusSchema.parse(body);
 
     const existingReport = await prisma.report.findUnique({
       where: { id },
