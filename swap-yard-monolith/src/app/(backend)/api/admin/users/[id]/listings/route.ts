@@ -7,8 +7,13 @@ import {
   UnauthorizedError,
   ForbiddenError,
 } from "@/lib/errors";
+import { z } from "zod";
 
 export const runtime = "nodejs";
+
+const idParamSchema = z.object({
+  id: z.string().trim().cuid({ message: "Invalid user ID format" }),
+});
 
 async function getCookie(req: Request, name: string) {
   const cookie = req.headers.get("cookie");
@@ -45,16 +50,14 @@ export async function GET(
   ctx: { params: Promise<{ id: string }> }
 ) {
   try {
-    await getAuthenticatedAdmin(req);
+    const { id } = idParamSchema.parse(await ctx.params);
 
-    const { id } = await ctx.params;
     const { searchParams } = new URL(req.url);
+    const { page, limit } = getUserSubResourceSchema.parse(
+      Object.fromEntries(searchParams)
+    );
 
-    // Throws ZodError on bad query params -> handleRouteError returns 400 Bad Request
-    const { page, limit } = getUserSubResourceSchema.parse({
-      page: searchParams.get("page") ?? undefined,
-      limit: searchParams.get("limit") ?? undefined,
-    });
+    await getAuthenticatedAdmin(req);
 
     const skip = (page - 1) * limit;
 

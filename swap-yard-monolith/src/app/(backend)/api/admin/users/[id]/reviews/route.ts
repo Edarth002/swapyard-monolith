@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { verifyToken } from "@/lib/token";
 import { getUserReviewsSchema } from "../../schema";
@@ -9,6 +10,10 @@ import {
 } from "@/lib/errors";
 
 export const runtime = "nodejs";
+
+const idParamSchema = z.object({
+  id: z.string().trim().cuid({ message: "Invalid user ID format" }),
+});
 
 async function getCookie(req: Request, name: string) {
   const cookie = req.headers.get("cookie");
@@ -45,17 +50,14 @@ export async function GET(
   ctx: { params: Promise<{ id: string }> }
 ) {
   try {
-    await getAuthenticatedAdmin(req);
+    const { id } = idParamSchema.parse(await ctx.params);
 
-    const { id } = await ctx.params;
     const { searchParams } = new URL(req.url);
+    const { page, limit, type } = getUserReviewsSchema.parse(
+      Object.fromEntries(searchParams)
+    );
 
-    // Schema throws ZodError on validation failure -> handleRouteError yields 400 Bad Request
-    const { page, limit, type } = getUserReviewsSchema.parse({
-      page: searchParams.get("page") ?? undefined,
-      limit: searchParams.get("limit") ?? undefined,
-      type: searchParams.get("type") ?? undefined,
-    });
+    await getAuthenticatedAdmin(req);
 
     const skip = (page - 1) * limit;
     const where = type === "received" ? { sellerId: id } : { buyerId: id };
