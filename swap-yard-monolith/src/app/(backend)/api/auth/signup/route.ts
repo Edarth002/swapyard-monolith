@@ -28,7 +28,7 @@ export async function POST(req: Request) {
 
     if (existingUser) {
       // Deterministic 409 Conflict for duplicate resource
-      throw new ConflictError("Invalid registration details. Please check your credentials or log in.");
+      throw new ConflictError("Unable to process registration. Please try again or log in if you already have an account.");
     }
 
     const hashedPassword = await bcrypt.hash(password, 10);

@@ -7,6 +7,7 @@ import {
   ForbiddenError,
   NotFoundError,
 } from "@/lib/errors";
+import { z } from "zod";
 
 export const runtime = "nodejs";
 
@@ -45,9 +46,11 @@ export async function GET(
   ctx: { params: Promise<{ id: string }> }
 ) {
   try {
-    await getAuthenticatedAdmin(req);
+    
 
-    const { id } = await ctx.params;
+    const { id } = z.object({ id: z.string().trim().cuid() }).parse(await ctx.params);
+    
+    await getAuthenticatedAdmin(req);
 
     const user = await prisma.user.findUnique({
       where: { id },
