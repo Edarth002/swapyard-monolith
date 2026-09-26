@@ -15,8 +15,13 @@ import {
   NotFoundError,
   AppError,
 } from "@/lib/errors";
+import { z } from "zod";
 
 export const runtime = "nodejs";
+
+const idParamSchema = z.object({
+  id: z.string().trim().cuid({ message: "Invalid listing ID format" }),
+});
 
 async function getCookie(req: Request, name: string) {
   const cookie = req.headers.get("cookie");
@@ -62,7 +67,7 @@ export async function GET(
   ctx: { params: Promise<{ id: string }> }
 ) {
   try {
-    const { id } = await ctx.params;
+    const { id } = idParamSchema.parse(await ctx.params);
     const user = await getAuthenticatedSeller(req);
 
     const listing = await prisma.listing.findFirst({
@@ -102,20 +107,7 @@ export async function PATCH(
   let newlyUploaded: Array<{ url: string; public_id: string }> = [];
 
   try {
-    const { id } = await ctx.params;
-    const user = await getAuthenticatedSeller(req);
-
-    const existing = await prisma.listing.findFirst({
-      where: {
-        id,
-        sellerId: user.id,
-      },
-      include: { images: true },
-    });
-
-    if (!existing) {
-      throw new NotFoundError("Listing not found");
-    }
+    const { id } = idParamSchema.parse(await ctx.params);
 
     const formData = await req.formData();
 
@@ -172,6 +164,20 @@ export async function PATCH(
       categoryId,
       replaceImages,
     } = updateListingSchema.parse(rawInput);
+
+    const user = await getAuthenticatedSeller(req);
+
+    const existing = await prisma.listing.findFirst({
+      where: {
+        id,
+        sellerId: user.id,
+      },
+      include: { images: true },
+    });
+
+    if (!existing) {
+      throw new NotFoundError("Listing not found");
+    }
 
     const data: Prisma.ListingUpdateInput = {};
 
@@ -319,7 +325,7 @@ export async function DELETE(
   ctx: { params: Promise<{ id: string }> }
 ) {
   try {
-    const { id } = await ctx.params;
+    const { id } = idParamSchema.parse(await ctx.params);
     const user = await getAuthenticatedSeller(req);
 
     const existing = await prisma.listing.findFirst({

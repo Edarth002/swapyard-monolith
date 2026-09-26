@@ -12,6 +12,10 @@ import {
 
 export const runtime = "nodejs";
 
+const idParamSchema = z.object({
+  id: z.string().trim().cuid({ message: "Invalid review ID format" }),
+});
+
 const updateReviewSchema = z
   .object({
     rating: z.coerce.number().int().min(1).max(5).optional(),
@@ -22,6 +26,7 @@ const updateReviewSchema = z
       .transform((val) => (val === "" ? null : val))
       .optional(),
   })
+  .strict()
   .refine(
     (data) => data.rating !== undefined || data.comment !== undefined,
     {
@@ -66,7 +71,7 @@ export async function GET(
   ctx: { params: Promise<{ id: string }> }
 ) {
   try {
-    const { id } = await ctx.params;
+    const { id } = idParamSchema.parse(await ctx.params);
 
     const review = await prisma.review.findUnique({
       where: { id },
@@ -91,8 +96,11 @@ export async function PUT(
   ctx: { params: Promise<{ id: string }> }
 ) {
   try {
+    const { id } = idParamSchema.parse(await ctx.params);
+    const body = await req.json();
+    const validatedData = updateReviewSchema.parse(body);
+
     const user = await getAuthBuyer(req);
-    const { id } = await ctx.params;
 
     const existing = await prisma.review.findUnique({
       where: { id },
@@ -106,10 +114,6 @@ export async function PUT(
     if (existing.buyerId !== user.id) {
       throw new ForbiddenError("You do not have permission to edit this review");
     }
-
-    const body = await req.json();
-    // Validates and coerces payload -> ZodError triggers 400 Bad Request
-    const validatedData = updateReviewSchema.parse(body);
 
     const review = await prisma.review.update({
       where: { id },
@@ -138,8 +142,9 @@ export async function DELETE(
   ctx: { params: Promise<{ id: string }> }
 ) {
   try {
+    const { id } = idParamSchema.parse(await ctx.params);
+
     const user = await getAuthBuyer(req);
-    const { id } = await ctx.params;
 
     const existing = await prisma.review.findUnique({
       where: { id },

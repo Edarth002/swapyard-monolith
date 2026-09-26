@@ -2,20 +2,29 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { fetchListings } from "@/lib/getListingLogic";
 import { handleRouteError, NotFoundError } from "@/lib/errors";
+import { z } from "zod";
 
 export const runtime = "nodejs";
+
+const catchAllSlugParamSchema = z.object({
+  slug: z
+    .array(
+      z
+        .string()
+        .trim()
+        .min(1, "Slug segment cannot be empty")
+        .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/, "Invalid slug segment format")
+    )
+    .min(1, "At least one path segment is required"),
+});
 
 export async function GET(
   req: Request,
   { params }: { params: Promise<{ slug: string[] }> }
 ) {
   try {
-    const { slug } = await params;
-    const targetSlug = slug?.[slug.length - 1];
-
-    if (!targetSlug) {
-      throw new NotFoundError("Resource not found");
-    }
+    const { slug } = catchAllSlugParamSchema.parse(await params);
+    const targetSlug = slug[slug.length - 1];
 
     const { searchParams } = new URL(req.url);
 
