@@ -249,7 +249,7 @@ export async function GET() {
         value: revenueToday,
         isCurrency: true,
         sub: "vs yesterday",
-        ...pctChange(revenueToday, revenueYesterday),
+        ...pctChange(Number(revenueToday), Number(revenueYesterday)),
       },
       {
         key: "pendingReports",
