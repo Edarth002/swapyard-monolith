@@ -62,7 +62,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ ok: true, received: true }, { status: 200 });
     }
 
-    const expectedKobo = Math.round(payment.amount * 100);
+    const expectedKobo = Math.round(payment.amount.toNumber() * 100);
     if (amount !== expectedKobo) {
       console.error("[Paystack Webhook] Amount mismatch", {
         expectedKobo,

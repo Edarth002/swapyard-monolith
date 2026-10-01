@@ -57,7 +57,7 @@ export async function GET(req: Request) {
       });
 
       if (payment && payment.status !== "SUCCESS") {
-        const expectedKobo = Math.round(payment.amount * 100);
+        const expectedKobo = Math.round(payment.amount.toNumber() * 100);
 
         if (amount === expectedKobo) {
           await prisma.$transaction([
