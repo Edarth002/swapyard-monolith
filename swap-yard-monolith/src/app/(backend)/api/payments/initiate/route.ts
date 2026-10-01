@@ -72,7 +72,7 @@ export async function POST(req: Request) {
       throw new AppError("No payment record found for this order", 400);
     }
 
-    const amountInKobo = Math.round(order.totalAmount * 100);
+    const amountInKobo = Math.round(order.totalAmount.toNumber() * 100);
 
     // Row-level lock on the Payment record
     const reference = await prisma.$transaction(async (tx) => {
