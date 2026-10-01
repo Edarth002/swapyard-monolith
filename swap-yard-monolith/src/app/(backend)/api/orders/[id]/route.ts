@@ -2,8 +2,20 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { verifyToken } from "@/lib/token";
 import { updateOrderSchema } from "../schema";
+import {
+  handleRouteError,
+  UnauthorizedError,
+  ForbiddenError,
+  NotFoundError,
+  AppError,
+} from "@/lib/errors";
+import { z } from "zod";
 
 export const runtime = "nodejs";
+
+const idParamSchema = z.object({
+  id: z.string().trim().cuid({ message: "Invalid order ID format" }),
+});
 
 async function getCookie(req: Request, name: string) {
   const cookie = req.headers.get("cookie");
@@ -17,12 +29,22 @@ async function getCookie(req: Request, name: string) {
   );
 }
 
-async function getUserId(req: Request) {
+async function getAuthenticatedUser(req: Request) {
   const token = await getCookie(req, "session");
-  if (!token) return null;
+  if (!token) throw new UnauthorizedError("Authentication required");
 
   const payload = await verifyToken(token);
-  return typeof payload === "string" ? payload : payload?.userId;
+  const userId = typeof payload === "string" ? payload : payload?.userId;
+  if (!userId) throw new UnauthorizedError("Invalid or expired session token");
+
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { id: true, role: true },
+  });
+
+  if (!user) throw new UnauthorizedError("User account not found");
+
+  return user;
 }
 
 export async function GET(
@@ -30,242 +52,179 @@ export async function GET(
   ctx: { params: Promise<{ id: string }> }
 ) {
   try {
-    const userId = await getUserId(req);
+    const { id } = idParamSchema.parse(await ctx.params);
 
-    if (!userId) {
-      return NextResponse.json({ message: "Unauthorized" }, { status: 401 });
-    }
+    const user = await getAuthenticatedUser(req);
 
-    const { id } = await ctx.params;
-
-    const order = await prisma.order.findFirst({
-      where: {
-        id,
-        OR: [
-          { buyerId: userId },
-          {
-            items: {
-              some: { sellerId: userId },
-            },
-          },
-        ],
-      },
+    const order = await prisma.order.findUnique({
+      where: { id },
       include: {
         buyer: {
-          select: {
-            id: true,
-            firstname: true,
-            lastname: true,
-            email: true,
-          },
+          select: { id: true, firstname: true, lastname: true, email: true },
         },
         items: {
           include: {
-            listing: {
-              select: {
-                id: true,
-                name: true,
-                price: true,
-              },
-            },
+            listing: { select: { id: true, name: true, price: true } },
             seller: {
-              select: {
-                id: true,
-                firstname: true,
-                lastname: true,
-                email: true,
-              },
+              select: { id: true, firstname: true, lastname: true, email: true },
             },
           },
         },
         payment: true,
+        ...(user.role === "ADMIN" ? { payouts: true } : {}),
       },
     });
 
     if (!order) {
-      return NextResponse.json({ message: "Order not found" }, { status: 404 });
+      throw new NotFoundError("Order not found");
     }
 
-    return NextResponse.json({ order }, { status: 200 });
+    const isBuyer = order.buyerId === user.id;
+    const isSeller = order.items.some((item) => item.sellerId === user.id);
+
+    if (user.role !== "ADMIN" && !isBuyer && !isSeller) {
+      throw new ForbiddenError("You do not have access to view this order");
+    }
+
+    return NextResponse.json(
+      {
+        ok: true,
+        order: {
+          ...order,
+          items: order.items ?? [],
+        },
+      },
+      { status: 200 }
+    );
   } catch (error) {
-    console.error("GET ORDER ERROR:", error);
-    return NextResponse.json({ message: "Server error" }, { status: 500 });
+    return handleRouteError(error);
   }
 }
+
 export async function PATCH(
   req: Request,
   ctx: { params: Promise<{ id: string }> }
 ) {
   try {
-    const userId = await getUserId(req);
-
-    if (!userId) {
-      return NextResponse.json({ message: "Unauthorized" }, { status: 401 });
-    }
-
-    const { id } = await ctx.params;
+    const { id } = idParamSchema.parse(await ctx.params);
     const body = await req.json();
-    const parsed = updateOrderSchema.safeParse(body);
+    const { status: newStatus } = updateOrderSchema.parse(body);
 
-    if (!parsed.success) {
-      return NextResponse.json(
-        {
-          message: "Invalid input",
-          errors: parsed.error.flatten().fieldErrors,
-        },
-        { status: 400 }
-      )
-    }
-
-    const newStatus = parsed.data.status;
+    const user = await getAuthenticatedUser(req);
 
     const existingOrder = await prisma.order.findFirst({
       where: {
         id,
-        OR: [
-          { buyerId: userId },
-          {
-            items: {
-              some: { sellerId: userId },
-            },
-          },
-        ],
+        ...(user.role === "ADMIN"
+          ? {}
+          : {
+              OR: [
+                { buyerId: user.id },
+                { items: { some: { sellerId: user.id } } },
+              ],
+            }),
       },
-      include: {
-        items: true,
-      },
+      include: { items: true },
     });
 
     if (!existingOrder) {
-      return NextResponse.json({ message: "Order not found" }, { status: 404 });
+      throw new NotFoundError("Order not found");
     }
 
-    const isBuyer = existingOrder.buyerId === userId;
-    const isSeller = existingOrder.items.some(
-      (item) => item.sellerId === userId
-    );
+    const isBuyer = existingOrder.buyerId === user.id;
+    const isSeller = existingOrder.items.some((item) => item.sellerId === user.id);
     const currentStatus = existingOrder.status;
 
-    if (newStatus === "DELIVERED" && !isSeller) {
-      return NextResponse.json(
-        { message: "Only seller can mark as delivered" },
-        { status: 403 }
-      );
-    }
-    if (newStatus === "COMPLETED" && !isBuyer) {
-      return NextResponse.json(
-        { message: "Only buyer can complete order" },
-        { status: 403 }
-      );
-    }
-
-    if (newStatus === "CANCELLED" && !isBuyer) {
-      return NextResponse.json(
-        { message: "Only buyer can cancel order" },
-        { status: 403 }
-      );
-    }
-
-    if (newStatus === "DELIVERED" && currentStatus !== "PAID") {
-      return NextResponse.json(
-        { message: "Order must be PAID before delivery" },
-        { status: 400 }
-      );
-    }
-
-    if (newStatus === "COMPLETED" && currentStatus !== "DELIVERED") {
-      return NextResponse.json(
-        { message: "Order must be DELIVERED before completion" },
-        { status: 400 }
-      );
-    }
-
-    if (newStatus === "CANCELLED" && currentStatus !== "PENDING_PAYMENT") {
-      return NextResponse.json(
-        { message: "Cannot cancel after payment" },
-        { status: 400 }
-      );
-    }
-
-    const updateData: any = {
-      status: newStatus,
-    };
-
-    if (newStatus === "DELIVERED") {
-      updateData.deliveredAt = new Date();
-    }
-
-    if (newStatus === "COMPLETED") {
-      updateData.completedAt = new Date();
-    }
-
-    if (newStatus === "CANCELLED") {
-      updateData.cancelledAt = new Date();
-    }
-
-    const order = await prisma.$transaction(async (tx) => {
-      if (newStatus === "CANCELLED") {
-        const listingIds = existingOrder.items
-          .map((item) => item.listingId)
-          .filter(Boolean) as string[];
-
-        if (listingIds.length > 0) {
-          await tx.listing.updateMany({
-            where: {
-              id: { in: listingIds },
-            },
-            data: {
-              status: "AVAILABLE",
-            },
-          });
+    if (user.role !== "ADMIN") {
+      if (newStatus === "SHIPPED") {
+        if (!isSeller) throw new ForbiddenError("Only seller can mark order as shipped");
+        if (currentStatus !== "PAID") {
+          throw new AppError("Order must be paid before it can be shipped", 400);
         }
       }
 
-      return await tx.order.update({
-        where: { id },
-        data: updateData,
-        include: {
-          buyer: {
-            select: {
-              id: true,
-              firstname: true,
-              lastname: true,
-              email: true,
-              },
+      if (newStatus === "DELIVERED") {
+        if (!isSeller) throw new ForbiddenError("Only seller can mark order as delivered");
+        if (currentStatus !== "SHIPPED") {
+          throw new AppError("Order must be shipped before it can be marked delivered", 400);
+        }
+      }
+
+      if (newStatus === "COMPLETED") {
+        if (!isBuyer) throw new ForbiddenError("Only buyer can complete order");
+        if (currentStatus !== "DELIVERED") {
+          throw new AppError("Order must be delivered before completion", 400);
+        }
+      }
+
+      if (newStatus === "CANCELLED") {
+        if (!isBuyer) throw new ForbiddenError("Only buyer can cancel order");
+        if (currentStatus !== "PENDING_PAYMENT") {
+          throw new AppError("Cannot cancel order after payment", 400);
+        }
+      }
+    }
+
+    const updateData: {
+      status: typeof newStatus;
+      deliveredAt?: Date;
+      completedAt?: Date;
+      cancelledAt?: Date;
+    } = { status: newStatus };
+
+    if (newStatus === "DELIVERED") updateData.deliveredAt = new Date();
+    if (newStatus === "COMPLETED") updateData.completedAt = new Date();
+    if (newStatus === "CANCELLED") updateData.cancelledAt = new Date();
+
+    const order = await prisma.$transaction(
+      async (tx) => {
+        if (newStatus === "CANCELLED" || newStatus === "REFUNDED") {
+          const listingIds = (existingOrder.items ?? [])
+            .map((item) => item.listingId)
+            .filter((lid): lid is string => Boolean(lid));
+
+          if (listingIds.length > 0) {
+            await tx.listing.updateMany({
+              where: { id: { in: listingIds } },
+              data: { status: "AVAILABLE" },
+            });
+          }
+        }
+
+        return await tx.order.update({
+          where: { id },
+          data: updateData,
+          include: {
+            buyer: {
+              select: { id: true, firstname: true, lastname: true, email: true },
             },
             items: {
               include: {
-                listing: {
-                  select: {
-                    id: true,
-                    name: true,
-                    price: true,
-                  },
-                },
+                listing: { select: { id: true, name: true, price: true } },
                 seller: {
-                  select: {
-                    id: true,
-                    firstname: true,
-                    lastname: true,
-                    email: true,
-                  },
+                  select: { id: true, firstname: true, lastname: true, email: true },
                 },
               },
             },
             payment: true,
           },
         });
-    }, {timeout: 10000});
+      },
+      { timeout: 10000 }
+    );
 
     return NextResponse.json(
       {
+        ok: true,
         message: "Order updated successfully",
-        order,
+        order: {
+          ...order,
+          items: order.items ?? [],
+        },
       },
       { status: 200 }
     );
   } catch (error) {
-    console.error("PATCH ORDER ERROR:", error);
-    return NextResponse.json({ message: "Server error" }, { status: 500 });
+    return handleRouteError(error);
   }
 }

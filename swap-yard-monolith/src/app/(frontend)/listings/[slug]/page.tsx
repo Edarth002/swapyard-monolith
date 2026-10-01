@@ -52,33 +52,37 @@ export default function ProductDetailsPage() {
       minimumFractionDigits: 0,
     }).format(price);
 
-useEffect(() => {
-  if (!slug) return;
+  useEffect(() => {
+    if (!slug) return;
 
-  let cancelled = false;
+    let cancelled = false;
 
-  const fetchProduct = async () => {
-    setIsLoading(true);
-    setError("");
-    try {
-      const res = await fetch(`/api/listing/${slug}`);
-      const data = await res.json();
-      if (cancelled) return;
-      if (data.ok) {
-        setProduct(data.listing);
-      } else {
-        setError(data.message || "Failed to load product details.");
+    const fetchProduct = async () => {
+      setIsLoading(true);
+      setError("");
+      try {
+        const res = await fetch(`/api/listings/${slug}`);
+        const data = await res.json();
+        if (cancelled) return;
+
+        if (data.ok) {
+          setProduct(data.listing);
+        } else if (data.redirectSlug) {
+          router.replace(`/listings/${data.redirectSlug}`);
+          return;
+        } else {
+          setError(data.message || "Failed to load product details.");
+        }
+      } catch {
+        if (!cancelled) setError("Network error occurred.");
+      } finally {
+        if (!cancelled) setIsLoading(false);
       }
-    } catch {
-      if (!cancelled) setError("Network error occurred.");
-    } finally {
-      if (!cancelled) setIsLoading(false);
-    }
-  };
+    };
 
-  fetchProduct();
-  return () => { cancelled = true; };
-}, [slug]); 
+    fetchProduct();
+    return () => { cancelled = true; };
+  }, [slug, router]);
 
   const productId = product?.id;
   const categoryName = product?.category?.name;
@@ -120,7 +124,7 @@ useEffect(() => {
     id: product.id,
     title: product.name,
     price: product.price,
-    imageUrl: displayImages[0],
+    imageUrl: displayImages?.[0] ?? "https://images.unsplash.com/photo-1555041469-a586c61ea9bc?auto=format&fit=crop&w=1000&q=80",
     quantity,
   });
 
@@ -158,7 +162,7 @@ useEffect(() => {
         id: product.id,
         title: product.name,
         price: product.price,
-        imageUrl: displayImages[0],
+        imageUrl: displayImages?.[0] ?? "https://images.unsplash.com/photo-1555041469-a586c61ea9bc?auto=format&fit=crop&w=1000&q=80",
         location: [product.location, product.state].filter(Boolean).join(", "),
         rating: 4.8,
         reviewsCount: 12,
@@ -182,7 +186,7 @@ useEffect(() => {
         id: item.id,
         title: item.name,
         price: item.price,
-        imageUrl: relatedImages[0],
+        imageUrl: relatedImages?.[0] ?? "https://images.unsplash.com/photo-1555041469-a586c61ea9bc?auto=format&fit=crop&w=1000&q=80",
         location: [item.location, item.state].filter(Boolean).join(", "),
         rating: item.rating ?? 0,
         reviewsCount: item.reviewsCount ?? 0,
@@ -438,29 +442,6 @@ useEffect(() => {
                   View Profile
                 </button>
               </div>
-
-              {/* <div className="flex items-center gap-10 mb-6">
-                <div>
-                  <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1">
-                    RATING
-                  </p>
-                  <div className="flex items-center gap-1 text-sm font-extrabold text-gray-900">
-                    <Star className="w-4 h-4 text-yellow-400 fill-yellow-400" /> 4.8
-                  </div>
-                </div>
-                
-              </div> */}
-
-              {/* <div className="flex gap-3">
-                {product.negotiable && (
-                  <button className="flex-1 flex items-center justify-center gap-2 py-3 border-2 border-gray-100 text-gray-800 font-extrabold text-xs rounded-xl hover:bg-gray-50 transition-colors cursor-pointer">
-                    <Tag className="w-4 h-4" /> Make Offer
-                  </button>
-                )}
-                <button className="flex-1 flex items-center justify-center gap-2 py-3 bg-[#EB3B18] text-white font-extrabold text-xs rounded-xl hover:bg-[#d93616] transition-colors cursor-pointer shadow-sm">
-                  <MessageSquare className="w-4 h-4" /> Message
-                </button>
-              </div> */}
             </div>
           </div>
         </div>

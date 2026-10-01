@@ -3,6 +3,11 @@ import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { verifyToken } from "@/lib/token";
 import { getOrdersSchema } from "./schema";
+import {
+  handleRouteError,
+  UnauthorizedError,
+  ForbiddenError,
+} from "@/lib/errors";
 
 export const runtime = "nodejs";
 
@@ -20,21 +25,11 @@ async function getCookie(req: Request, name: string) {
 
 async function getAuthenticatedUser(req: Request) {
   const token = await getCookie(req, "session");
-
-  if (!token) {
-    return {
-      error: NextResponse.json({ message: "Unauthorized" }, { status: 401 }),
-    };
-  }
+  if (!token) throw new UnauthorizedError("Authentication required");
 
   const payload = await verifyToken(token);
   const userId = typeof payload === "string" ? payload : payload?.userId;
-
-  if (!userId) {
-    return {
-      error: NextResponse.json({ message: "Unauthorized" }, { status: 401 }),
-    };
-  }
+  if (!userId) throw new UnauthorizedError("Invalid or expired session token");
 
   const user = await prisma.user.findUnique({
     where: { id: userId },
@@ -47,23 +42,14 @@ async function getAuthenticatedUser(req: Request) {
     },
   });
 
-  if (!user) {
-    return {
-      error: NextResponse.json({ message: "User does not exist" }, { status: 404 }),
-    };
-  }
+  if (!user) throw new UnauthorizedError("User account not found");
 
-  return { user };
+  return user;
 }
-
 
 export async function GET(req: Request) {
   try {
-    const auth = await getAuthenticatedUser(req);
-    if ("error" in auth) return auth.error;
-
-    const { user } = auth;
-
+    const user = await getAuthenticatedUser(req);
     const { searchParams } = new URL(req.url);
 
     const rawQuery = {
@@ -73,32 +59,28 @@ export async function GET(req: Request) {
       limit: searchParams.get("limit") ?? undefined,
     };
 
-    const validatedQuery = getOrdersSchema.safeParse(rawQuery);
+    // Parse query parameters directly: throws ZodError -> 400 Bad Request
+    const { status, scope, page, limit } = getOrdersSchema.parse(rawQuery);
 
-    if (!validatedQuery.success) {
-      return NextResponse.json(
-        {
-          message: "Invalid query parameters",
-          errors: validatedQuery.error.flatten().fieldErrors,
-        },
-        { status: 400 }
-      );
+    if (scope === "admin" && user.role !== "ADMIN") {
+      throw new ForbiddenError("Admin access required for this scope");
     }
 
-    const { status, scope, page, limit } = validatedQuery.data;
     const skip = (page - 1) * limit;
 
     const where: Prisma.OrderWhereInput = {
       ...(status ? { status } : {}),
       ...(scope === "buyer"
         ? { buyerId: user.id }
-        : {
+        : scope === "seller"
+        ? {
             items: {
               some: {
                 sellerId: user.id,
               },
             },
-          }),
+          }
+        : {}),
     };
 
     const [orders, total] = await Promise.all([
@@ -121,6 +103,7 @@ export async function GET(req: Request) {
                   name: true,
                   price: true,
                   status: true,
+                  condition: true,
                   images: {
                     select: {
                       id: true,
@@ -141,7 +124,8 @@ export async function GET(req: Request) {
             },
           },
           payment: true,
-          payouts: true,
+          // Payouts contain seller bank details; expose only to admins
+          ...(user.role === "ADMIN" ? { payouts: true } : {}),
         },
         orderBy: { createdAt: "desc" },
         skip,
@@ -153,19 +137,18 @@ export async function GET(req: Request) {
     return NextResponse.json(
       {
         ok: true,
-        items: orders,
+        items: orders ?? [],
         meta: {
           total,
           page,
           limit,
-          pages: Math.ceil(total / limit),
+          pages: Math.ceil(total / limit) || 0,
           scope,
         },
       },
       { status: 200 }
     );
   } catch (error) {
-    console.error("Error fetching orders:", error);
-    return NextResponse.json({ message: "Server error" }, { status: 500 });
+    return handleRouteError(error);
   }
 }

@@ -2,31 +2,26 @@ import { prisma } from "@/lib/prisma";
 import { NextResponse } from "next/server";
 import bcrypt from "bcryptjs";
 import { resetPasswordSchema } from "../schema";
+import {
+  handleRouteError,
+  AppError,
+  NotFoundError,
+} from "@/lib/errors";
+
+export const runtime = "nodejs";
 
 export async function POST(req: Request) {
   try {
     const body = await req.json();
 
-    const validatedInput = resetPasswordSchema.safeParse(body);
-
-    if (!validatedInput.success) {
-      return NextResponse.json(
-        {
-          message: "Input does not meet required schema",
-          errors: validatedInput.error.flatten(),
-        },
-        { status: 400 }
-      );
-    }
-
-    const { token, password } = validatedInput.data;
+    const { token, password } = resetPasswordSchema.parse(body);
 
     const passwordResetToken = await prisma.passwordResetToken.findUnique({
       where: { token },
     });
 
     if (!passwordResetToken) {
-      return NextResponse.json({ message: "Invalid token." }, { status: 400 });
+      throw new AppError("Invalid or expired password reset token", 400);
     }
 
     const hasExpired = new Date() > new Date(passwordResetToken.expires);
@@ -34,26 +29,18 @@ export async function POST(req: Request) {
     if (hasExpired) {
       await prisma.passwordResetToken.delete({
         where: { token },
-      });
+      }).catch(() => null);
 
-      return NextResponse.json(
-        { message: "Token has expired." },
-        { status: 400 }
-      );
+      throw new AppError("Password reset token has expired", 400);
     }
 
     const user = await prisma.user.findUnique({
       where: { email: passwordResetToken.email },
-      select: {
-        id: true,
-      },
+      select: { id: true },
     });
 
     if (!user) {
-      return NextResponse.json(
-        { message: "Authentication process failed" },
-        { status: 404 }
-      );
+      throw new NotFoundError("User associated with this reset token not found");
     }
 
     const hashedPassword = await bcrypt.hash(password, 10);
@@ -69,14 +56,13 @@ export async function POST(req: Request) {
     ]);
 
     return NextResponse.json(
-      { message: "Password reset successfully." },
+      {
+        ok: true,
+        message: "Password reset successfully.",
+      },
       { status: 200 }
     );
   } catch (error) {
-    console.error("Error during password reset:", error);
-    return NextResponse.json(
-      { message: "Internal server error" },
-      { status: 500 }
-    );
+    return handleRouteError(error);
   }
 }

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import {
     Search,
     ChevronDown,
@@ -87,18 +87,6 @@ const STATUS_BADGE_CLASS: Record<OrderStatus, string> = {
 const formatPrice = (price: number) =>
     new Intl.NumberFormat("en-NG", { style: "currency", currency: "NGN", minimumFractionDigits: 0 }).format(price);
 
-
-function loadPaystackScript(): Promise<void> {
-    return new Promise((resolve, reject) => {
-        if (document.getElementById("paystack-inline-js")) { resolve(); return; }
-        const script = document.createElement("script");
-        script.id = "paystack-inline-js";
-        script.src = "https://js.paystack.co/v1/inline.js";
-        script.onload = () => resolve();
-        script.onerror = () => reject(new Error("Failed to load Paystack script"));
-        document.body.appendChild(script);
-    });
-}
 
 interface CancelModalProps {
     order: Order;
@@ -209,9 +197,6 @@ function CancelModal({ order, onClose, onCancelled }: CancelModalProps) {
     );
 }
 
-// -----------------------------------------------------------------
-// Progress step
-// -----------------------------------------------------------------
 type StepState = "inactive" | "done" | "active";
 
 interface ProgressStepProps {
@@ -265,21 +250,43 @@ function ProgressStep({ icon, label, state, activeColor, isLast }: ProgressStepP
 function ConfirmDeliveryButton({ orderId, onConfirmed }: { orderId: string; onConfirmed: () => void }) {
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    const [success, setSuccess] = useState(false);
+    const isSubmittingRef = useRef(false);
 
     const handleConfirm = async () => {
+        // Synchronous guard — setLoading(true) alone isn't enough, since a
+        // second click can fire before React re-renders with the button
+        // actually disabled. This blocks it immediately, same tick.
+        if (isSubmittingRef.current) return;
+        isSubmittingRef.current = true;
+
         setLoading(true);
         setError(null);
+        setSuccess(false);
         try {
-            const res = await fetch(`/api/orders/${orderId}/update`, {
-                method: "POST",
+            const res = await fetch(`/api/orders/${orderId}`, {
+                method: "PATCH",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ status: "BUYER_CONFIRMED" }),
+                body: JSON.stringify({ status: "COMPLETED" }),
             });
             const data = await res.json();
-            if (!res.ok || !data.ok) throw new Error(data.message || "Failed to confirm delivery.");
+
+            if (!res.ok) {
+                throw new Error(data.message || "Failed to confirm delivery.");
+            }
+
+            if (data.order?.status !== "COMPLETED") {
+                throw new Error("Order was not marked as completed. Please try again.");
+            }
+
+            setSuccess(true);
             onConfirmed();
         } catch (err: unknown) {
             setError(err instanceof Error ? err.message : "Something went wrong.");
+            // Only release the lock on failure — a genuine success should
+            // stay locked (the button also disables via `success` below),
+            // since the order is already COMPLETED and shouldn't be retried.
+            isSubmittingRef.current = false;
         } finally {
             setLoading(false);
         }
@@ -289,12 +296,21 @@ function ConfirmDeliveryButton({ orderId, onConfirmed }: { orderId: string; onCo
         <div className="flex flex-col gap-1">
             <button
                 onClick={handleConfirm}
-                disabled={loading}
+                disabled={loading || success}
                 className="flex items-center justify-center gap-2 w-full py-2.5 rounded-xl bg-teal-500 hover:bg-teal-600 active:scale-[0.98] text-white text-sm font-semibold transition-all disabled:opacity-60 disabled:cursor-not-allowed cursor-pointer"
             >
-                {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <PackageCheck className="w-4 h-4" />}
-                {loading ? "Confirming…" : "I've received this order"}
+                {loading ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                    <PackageCheck className="w-4 h-4" />
+                )}
+                {loading ? "Confirming…" : success ? "Confirmed" : "I've received this order"}
             </button>
+            {success && (
+                <p className="text-xs text-teal-600 text-center font-semibold">
+                    Delivery confirmed successfully.
+                </p>
+            )}
             {error && <p className="text-xs text-red-500 text-center">{error}</p>}
         </div>
     );
@@ -322,58 +338,34 @@ function OrderCard({
     const [payError, setPayError] = useState<string | null>(null);
 
     const handlePay = async () => {
-        setIsPaying(true);
-        setPayError(null);
+    setIsPaying(true);
+    setPayError(null); 
 
-        try {
-            const res = await fetch("/api/payments/initiate", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ orderId: order.id }),
-            });
-            const data = await res.json();
+    try {
+        const res = await fetch("/api/payments/initiate", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ orderId: order.id }),
+        });
+        const data = await res.json();
 
-            if (!data.ok || !data.authorizationUrl) {
-                throw new Error(data.message || "Could not start payment.");
-            }
-
-            try {
-                await loadPaystackScript();
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                const PaystackPop = (window as any).PaystackPop;
-                if (!PaystackPop) throw new Error("PaystackPop not available");
-
-                const handler = PaystackPop.setup({
-                    key: process.env.NEXT_PUBLIC_PAYSTACK_PUBLIC_KEY,
-                    email: data.email,           // your /api/payments/initiate should return the buyer email
-                    amount: data.amountInKobo,   // and the amount in kobo
-                    ref: data.reference,
-                    currency: "NGN",
-                    onSuccess: () => {
-                        onStatusUpdate(order.id, "PAID");
-                        setIsPaying(false);
-                    },
-                    onCancel: () => {
-                        setIsPaying(false);
-                        setPayError("Payment cancelled. You can try again anytime.");
-                    },
-                });
-
-                handler.openIframe();
-                // isPaying stays true until callback fires
-            } catch {
-                // Inline script failed — redirect fallback
-                window.location.href = data.authorizationUrl;
-            }
-        } catch (err: unknown) {
-            setIsPaying(false);
-            setPayError(err instanceof Error ? err.message : "Something went wrong.");
+        if (!data.ok || !data.authorizationUrl) {
+            throw new Error(data.message || "Could not start payment.");
         }
-    };
+
+        // Reference was already initialized server-side in /api/payments/initiate.
+        // Redirect to Paystack's hosted checkout instead of also opening the
+        // inline widget — initializing the same reference twice (once via the
+        // REST API, once via PaystackPop.setup) is what caused the 400.
+        window.location.href = data.authorizationUrl;
+    } catch (err: unknown) {
+        setIsPaying(false);
+        setPayError(err instanceof Error ? err.message : "Something went wrong."); 
+    }
+};
 
     return (
         <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden transition-shadow hover:shadow-md">
-            {/* Card header */}
             <div className="flex items-center justify-between px-5 py-3.5 border-b border-gray-100 bg-gray-50/60">
                 <span className="text-xs font-mono font-medium text-gray-500">
                     #{order.id.slice(-8).toUpperCase()}
@@ -394,7 +386,6 @@ function OrderCard({
             </div>
 
             <div className="p-5 flex flex-col gap-5">
-                {/* Items */}
                 <div className="flex flex-col gap-3">
                     {order.items.map((item, i) => (
                         <div key={i} className="flex items-center gap-3">

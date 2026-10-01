@@ -112,7 +112,7 @@ export function useSellerStore() {
     const fetchStoreItems = async (sellerId: string) => {
         try {
             setError("");
-            const res = await fetch(`/api/listing?sellerId=${sellerId}&limit=50`, {
+            const res = await fetch(`/api/listings?sellerId=${sellerId}&limit=50`, {
                 credentials: "include"
             });
             const data = await res.json();
@@ -128,7 +128,7 @@ export function useSellerStore() {
     // Fetch Reviews Function
     const fetchReviews = async (sellerId: string) => {
         try {
-            const res = await fetch(`/api/review?sellerId=${sellerId}&limit=50`);
+            const res = await fetch(`/api/reviews?sellerId=${sellerId}&limit=50`);
             const data = await res.json();
 
             if (!res.ok) throw new Error(data.message || "Failed to fetch reviews");
@@ -163,7 +163,7 @@ export function useSellerStore() {
             setIsDeleting(true);
             setError("");
 
-            const res = await fetch(`/api/listing/${itemToDelete}`, {
+            const res = await fetch(`/api/seller/listings/${itemToDelete}`, {
                 method: "DELETE",
                 credentials: "include",
             });
