@@ -8,6 +8,7 @@ import {
   ConflictError,
   AppError,
 } from "@/lib/errors";
+import { Prisma } from "@prisma/client";
 
 export const runtime = "nodejs";
 
@@ -96,7 +97,7 @@ export async function POST(req: Request) {
       throw new AppError("Cart is empty", 400);
     }
 
-    let subtotal = 0;
+    let subtotal = new Prisma.Decimal(0);
     const orderItemsData = cart.items.map((item) => {
       if (item.listing.status !== "AVAILABLE") {
         throw new AppError(
@@ -104,7 +105,8 @@ export async function POST(req: Request) {
           400
         );
       }
-      subtotal += item.listing.price * item.quantity;
+      const lineItemTotal = item.listing.price.mul(item.quantity);
+      subtotal = subtotal.plus(lineItemTotal);
       return {
         listingId: item.listing.id,
         sellerId: item.listing.sellerId,
@@ -114,9 +116,9 @@ export async function POST(req: Request) {
       };
     });
 
-    const deliveryFee = 0;
-    const platformCommission = subtotal * 0.015;
-    const totalAmount = subtotal + deliveryFee;
+    const deliveryFee = new Prisma.Decimal(500);
+    const platformCommission = subtotal.mul(0.015);
+    const totalAmount = subtotal.plus(deliveryFee);
     const listingIds = orderItemsData.map((i) => i.listingId);
 
     const newOrder = await prisma.$transaction(
@@ -167,7 +169,7 @@ export async function POST(req: Request) {
         },
         body: JSON.stringify({
           email: user.email,
-          amount: Math.round(totalAmount * 100),
+          amount: Math.round(Number(totalAmount) * 100),
           reference: newOrder.payment?.id,
           callback_url: `${baseUrl}/payment/success`,
         }),
