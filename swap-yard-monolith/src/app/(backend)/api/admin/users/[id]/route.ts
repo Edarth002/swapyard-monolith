@@ -1,6 +1,13 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { verifyToken } from "@/lib/token";
+import {
+  handleRouteError,
+  UnauthorizedError,
+  ForbiddenError,
+  NotFoundError,
+} from "@/lib/errors";
+import { z } from "zod";
 
 export const runtime = "nodejs";
 
@@ -17,21 +24,21 @@ async function getCookie(req: Request, name: string) {
 
 async function getAuthenticatedAdmin(req: Request) {
   const token = await getCookie(req, "session");
-  if (!token) return { error: NextResponse.json({ message: "Unauthorized" }, { status: 401 }) };
+  if (!token) throw new UnauthorizedError("Authentication required");
 
   const payload = await verifyToken(token);
   const userId = typeof payload === "string" ? payload : payload?.userId;
-  if (!userId) return { error: NextResponse.json({ message: "Unauthorized" }, { status: 401 }) };
+  if (!userId) throw new UnauthorizedError("Invalid or expired session token");
 
   const user = await prisma.user.findUnique({
     where: { id: userId },
     select: { id: true, role: true },
   });
 
-  if (!user) return { error: NextResponse.json({ message: "User does not exist" }, { status: 404 }) };
-  if (user.role !== "ADMIN") return { error: NextResponse.json({ message: "Forbidden" }, { status: 403 }) };
+  if (!user) throw new UnauthorizedError("User does not exist");
+  if (user.role !== "ADMIN") throw new ForbiddenError("Admin access required");
 
-  return { user };
+  return user;
 }
 
 export async function GET(
@@ -39,10 +46,11 @@ export async function GET(
   ctx: { params: Promise<{ id: string }> }
 ) {
   try {
-    const auth = await getAuthenticatedAdmin(req);
-    if ("error" in auth) return auth.error;
+    
 
-    const { id } = await ctx.params;
+    const { id } = z.object({ id: z.string().trim().cuid() }).parse(await ctx.params);
+    
+    await getAuthenticatedAdmin(req);
 
     const user = await prisma.user.findUnique({
       where: { id },
@@ -88,12 +96,11 @@ export async function GET(
     });
 
     if (!user) {
-      return NextResponse.json({ message: "User not found" }, { status: 404 });
+      throw new NotFoundError("User not found");
     }
 
     return NextResponse.json({ ok: true, user }, { status: 200 });
   } catch (error) {
-    console.error("Error fetching admin user detail:", error);
-    return NextResponse.json({ message: "Server error" }, { status: 500 });
+    return handleRouteError(error);
   }
 }

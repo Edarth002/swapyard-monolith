@@ -13,7 +13,7 @@ export const LatestListings = () => {
     const fetchListings = async () => {
       setIsLoading(true);
       try {
-        const res = await fetch("/api/listing?limit=8");
+        const res = await fetch("/api/listings?limit=8");
         const data = await res.json();
         
         if (data.ok) {
@@ -31,7 +31,7 @@ export const LatestListings = () => {
             rating: 4.8,     
             reviewsCount: 12,
           }));
-          setListings(mappedData.filter((item: any) => item.status !== "SOLD"));
+          setListings(mappedData.filter((item: any) => item.status === "AVAILABLE"));
         }
       } catch (error) {
         console.error("Error fetching latest listings:", error);

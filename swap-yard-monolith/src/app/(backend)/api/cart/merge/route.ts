@@ -2,6 +2,11 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { verifyToken } from "@/lib/token";
 import { mergeCartSchema } from "../schema";
+import {
+  handleRouteError,
+  UnauthorizedError,
+  AppError,
+} from "@/lib/errors";
 
 export const runtime = "nodejs";
 
@@ -19,48 +24,41 @@ async function getCookie(req: Request, name: string) {
 
 async function getUser(req: Request) {
   const token = await getCookie(req, "session");
-  if (!token) return null;
+  if (!token) throw new UnauthorizedError("Authentication required");
 
   const payload = await verifyToken(token);
   const userId = typeof payload === "string" ? payload : payload?.userId;
+  if (!userId) throw new UnauthorizedError("Invalid or expired session token");
 
-  if (!userId) return null;
-
-  return prisma.user.findUnique({
+  const user = await prisma.user.findUnique({
     where: { id: userId, role: "BUYER" },
+    select: { id: true },
   });
+
+  if (!user) {
+    throw new UnauthorizedError("Buyer authentication required");
+  }
+
+  return user;
 }
 
 export async function POST(req: Request) {
   try {
     const user = await getUser(req);
 
-    if (!user) {
-      return NextResponse.json({ message: "Unauthorized" }, { status: 401 });
-    }
-
     const body = await req.json();
-    const parsed = mergeCartSchema.safeParse(body);
-
-    if (!parsed.success) {
-      return NextResponse.json(
-        {
-          message: "Invalid input",
-          errors: parsed.error.flatten().fieldErrors,
-        },
-        { status: 400 }
-      );
-    }
-
-    const { items } = parsed.data;
+    // Direct parse -> throws ZodError automatically mapped to 400 Bad Request
+    const { items } = mergeCartSchema.parse(body);
 
     let cart = await prisma.cart.findUnique({
       where: { buyerId: user.id },
+      select: { id: true },
     });
 
     if (!cart) {
       cart = await prisma.cart.create({
         data: { buyerId: user.id },
+        select: { id: true },
       });
     }
 
@@ -74,44 +72,41 @@ export async function POST(req: Request) {
     });
 
     const validIds = new Set(existingListings.map((l) => l.id));
-
     const invalidItems = items.filter((i) => !validIds.has(i.listingId));
 
     if (invalidItems.length > 0) {
-      return NextResponse.json(
-        { message: "Some listings do not exist" },
-        { status: 400 }
-      );
+      throw new AppError("Some listings do not exist", 400);
     }
 
-    for (const item of items) {
-      await prisma.cartItem.upsert({
-        where: {
-          cartId_listingId: {
+    await prisma.$transaction(
+      items.map((item) =>
+        prisma.cartItem.upsert({
+          where: {
+            cartId_listingId: {
+              cartId: cart.id,
+              listingId: item.listingId,
+            },
+          },
+          update: {
+            quantity: { increment: item.quantity },
+          },
+          create: {
             cartId: cart.id,
             listingId: item.listingId,
+            quantity: item.quantity,
           },
-        },
-        update: {
-          quantity: { increment: item.quantity },
-        },
-        create: {
-          cartId: cart.id,
-          listingId: item.listingId,
-          quantity: item.quantity,
-        },
-      });
-    }
-
-    return NextResponse.json({
-      message: "Cart merged successfully",
-    });
-
-  } catch (err) {
-    console.error("MERGE CART ERROR:", err);
-    return NextResponse.json(
-      { message: "Server error" },
-      { status: 500 }
+        })
+      )
     );
+
+    return NextResponse.json(
+      {
+        ok: true,
+        message: "Cart merged successfully",
+      },
+      { status: 200 }
+    );
+  } catch (err) {
+    return handleRouteError(err);
   }
 }

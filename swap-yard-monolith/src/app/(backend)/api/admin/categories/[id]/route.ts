@@ -6,10 +6,16 @@ import {
   uploadOneImageFile,
   deleteImageByPublicId,
 } from "@/app/(backend)/utils/cloudinary";
-import { updateCategorySchema } from "../schema";
+import { updateCategorySchema } from "../../../categories/schema";
 import { createCategorySlug } from "@/lib/slugGenerator";
+import { handleRouteError, UnauthorizedError, NotFoundError } from "@/lib/errors";
+import { z } from "zod";
 
 export const runtime = "nodejs";
+
+const idParamSchema = z.object({
+  id: z.string().trim().cuid({ message: "Invalid category ID format" }),
+});
 
 async function getCookie(req: Request, name: string) {
   const cookie = req.headers.get("cookie");
@@ -23,7 +29,7 @@ async function getCookie(req: Request, name: string) {
   );
 }
 
-async function getSeller(req: Request) {
+async function getAdmin(req: Request) {
   const token = await getCookie(req, "session");
   if (!token) return null;
 
@@ -37,56 +43,31 @@ async function getSeller(req: Request) {
     select: { id: true, role: true },
   });
 
-  if (!user || user.role !== "SELLER") return null;
+  if (!user || user.role !== "ADMIN") return null;
 
   return user;
 }
 
-export async function GET(
-  _req: Request,
-  ctx: { params: Promise<{ slug: string }> }
-) {
-  const { slug } = await ctx.params;
-
-  const category = await prisma.category.findUnique({
-    where: { slug },
-    include: {
-      listings: {
-        include: {
-          images: true,
-        },
-      },
-    },
-  });
-
-  if (!category) {
-    return NextResponse.json({ message: "Not found" }, { status: 404 });
-  }
-
-  return NextResponse.json({ category });
-}
-
 export async function PATCH(
   req: Request,
-  ctx: { params: Promise<{ slug: string }> }
+  ctx: { params: Promise<{ id: string }> }
 ) {
   let uploadedImage: any = null;
 
   try {
-    const seller = await getSeller(req);
+    const { id } = idParamSchema.parse(await ctx.params);
 
-    if (!seller) {
-      return NextResponse.json({ message: "Unauthorized" }, { status: 401 });
+    const admin = await getAdmin(req);
+    if (!admin) {
+      throw new UnauthorizedError();
     }
 
-    const { slug } = await ctx.params;
-
     const existing = await prisma.category.findUnique({
-      where: { slug },
+      where: { id },
     });
 
     if (!existing) {
-      return NextResponse.json({ message: "Not found" }, { status: 404 });
+      throw new NotFoundError("Category not found");
     }
 
     const formData = await req.formData();
@@ -98,19 +79,7 @@ export async function PATCH(
           : undefined,
     };
 
-    const parsed = updateCategorySchema.safeParse(rawInput);
-
-    if (!parsed.success) {
-      return NextResponse.json(
-        {
-          message: "Invalid input",
-          errors: parsed.error.flatten().fieldErrors,
-        },
-        { status: 400 }
-      );
-    }
-
-    const { name } = parsed.data;
+    const { name } = updateCategorySchema.parse(rawInput);
 
     const data: Prisma.CategoryUpdateInput = {};
 
@@ -120,16 +89,18 @@ export async function PATCH(
       const baseSlug = createCategorySlug(name);
       let newSlug = baseSlug;
 
-      let existingSlug = await prisma.category.findUnique({
-        where: { slug: newSlug },
-      });
+      const slugTaken = async (candidate: string) => {
+        const [liveMatch, historyMatch] = await Promise.all([
+          prisma.category.findUnique({ where: { slug: candidate } }),
+          prisma.categorySlugHistory.findFirst({ where: { slug: candidate } }),
+        ]);
+        const liveConflict = liveMatch && liveMatch.id !== existing.id;
+        return Boolean(liveConflict || historyMatch);
+      };
 
       let counter = 1;
-      while (existingSlug && existingSlug.id !== existing.id) {
+      while (await slugTaken(newSlug)) {
         newSlug = `${baseSlug}-${counter}`;
-        existingSlug = await prisma.category.findUnique({
-          where: { slug: newSlug },
-        });
         counter++;
       }
 
@@ -147,9 +118,22 @@ export async function PATCH(
       data.publicId = uploadedImage.public_id;
     }
 
-    const updated = await prisma.category.update({
-      where: { id: existing.id },
-      data,
+    const updated = await prisma.$transaction(async (tx) => {
+      const category = await tx.category.update({
+        where: { id: existing.id },
+        data,
+      });
+
+      if (data.slug && data.slug !== existing.slug) {
+        await tx.categorySlugHistory.create({
+          data: {
+            slug: existing.slug,
+            categoryId: existing.id,
+          },
+        });
+      }
+
+      return category;
     });
 
     if (uploadedImage && existing.publicId) {
@@ -169,37 +153,6 @@ export async function PATCH(
       } catch {}
     }
 
-    return NextResponse.json({ message: "Server error" }, { status: 500 });
+    return handleRouteError(err);
   }
-}
-
-export async function DELETE(
-  req: Request,
-  ctx: { params: Promise<{ slug: string }> }
-) {
-  const seller = await getSeller(req);
-
-  if (!seller) {
-    return NextResponse.json({ message: "Unauthorized" }, { status: 401 });
-  }
-
-  const { slug } = await ctx.params;
-
-  const existing = await prisma.category.findUnique({
-    where: { slug },
-  });
-
-  if (!existing) {
-    return NextResponse.json({ message: "Not found" }, { status: 404 });
-  }
-
-  await prisma.category.delete({
-    where: { id: existing.id },
-  });
-
-  if (existing.publicId) {
-    await deleteImageByPublicId(existing.publicId);
-  }
-
-  return NextResponse.json({ message: "Deleted" });
 }

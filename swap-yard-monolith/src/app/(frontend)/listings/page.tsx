@@ -157,7 +157,7 @@ function ListingsContent() {
   const [meta, setMeta] = useState({ total: 0, page: 1, pages: 1 });
   const [isLoading, setIsLoading] = useState(true);
 
-  // How many map-view items are currently visible; grows when "Load More" is clicked.
+
   const [mapVisibleCount, setMapVisibleCount] = useState(4);
 
   useEffect(() => {
@@ -165,11 +165,11 @@ function ListingsContent() {
       setIsLoading(true);
       try {
         const queryString = searchParams.toString();
-        const res = await fetch(`/api/listing?${queryString}`);
+        const res = await fetch(`/api/listings?${queryString}`);
         const alldata = await res.json();
 
         const filteredItems = alldata.items.filter(
-          (item: any) => item.status !== "SOLD"
+          (item: any) => item.status === "AVAILABLE" 
         );
 
         const mappedData = filteredItems.map((item: any, index: number) => {
@@ -190,7 +190,7 @@ function ListingsContent() {
             condition: item.condition || "Used",
             imageUrl:
               item.images && item.images.length > 0
-                ? item.images[0].url
+                ? item.images?.[0]?.url
                 : "https://images.unsplash.com/photo-1598300042247-d088f8ab3a91?q=80&w=500&auto=format&fit=crop",
             isVerified: true,
             rating: 4.8,

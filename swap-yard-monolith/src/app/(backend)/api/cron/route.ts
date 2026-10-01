@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { PrismaClient } from '@prisma/client';
+import { handleRouteError } from '@/lib/errors';
 
 const prisma = new PrismaClient();
 
@@ -26,7 +27,6 @@ export async function GET(request: Request) {
     });
 
   } catch (error) {
-    console.error("Cron job failed:", error);
-    return NextResponse.json({ success: false, error: "Internal Error" }, { status: 500 });
+    return handleRouteError(error);
   }
 }

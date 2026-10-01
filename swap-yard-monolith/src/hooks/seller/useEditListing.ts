@@ -31,7 +31,7 @@ export function useEditListing(listingId: string) {
     useEffect(() => {
         const fetchListing = async () => {
             try {
-                const res = await fetch(`/api/listing/${listingId}`);
+                const res = await fetch(`/api/seller/listings/${listingId}`);
                 const data = await res.json();
 
                 if (!res.ok) throw new Error(data.message || "Failed to fetch listing");
@@ -95,9 +95,8 @@ export function useEditListing(listingId: string) {
                 formData.append("images", image);
             });
 
-            // Use PUT as defined in your backend
-            const res = await fetch(`/api/listing/${listingId}`, {
-                method: "PUT",
+            const res = await fetch(`/api/seller/listings/${listingId}`, {
+                method: "PATCH",
                 body: formData, 
             });
 

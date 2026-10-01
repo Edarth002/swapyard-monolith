@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { verifyToken } from "@/lib/token";
 import { getNotificationsSchema } from "./schema";
+import { handleRouteError, UnauthorizedError } from "@/lib/errors";
 
 export const runtime = "nodejs";
 
@@ -19,31 +20,26 @@ async function getCookie(req: Request, name: string) {
 export async function GET(req: Request) {
   try {
     const token = await getCookie(req, "session");
-    if (!token) return NextResponse.json({ message: "Unauthorized" }, { status: 401 });
+    if (!token) throw new UnauthorizedError("Authentication required");
 
     const payload = await verifyToken(token);
     const userId = typeof payload === "string" ? payload : payload?.userId;
-    if (!userId) return NextResponse.json({ message: "Unauthorized" }, { status: 401 });
+    if (!userId) throw new UnauthorizedError("Invalid or expired session token");
 
     const user = await prisma.user.findUnique({
       where: { id: userId },
       select: { id: true },
     });
-    if (!user) return NextResponse.json({ message: "Unauthorized" }, { status: 401 });
+    if (!user) throw new UnauthorizedError("User account not found");
 
     const { searchParams } = new URL(req.url);
     const rawParams = {
-      page: searchParams.get("page"),
-      limit: searchParams.get("limit"),
-      read: searchParams.get("read"),
+      page: searchParams.get("page") ?? undefined,
+      limit: searchParams.get("limit") ?? undefined,
+      read: searchParams.get("read") ?? undefined,
     };
-
-    const validatedParams = getNotificationsSchema.safeParse(rawParams);
-    if (!validatedParams.success) {
-      return NextResponse.json({ message: "Bad Request" }, { status: 400 });
-    }
-
-    const { page, limit, read } = validatedParams.data;
+    
+    const { page, limit, read } = getNotificationsSchema.parse(rawParams);
     const skip = (page - 1) * limit;
 
     const where = {
@@ -62,18 +58,21 @@ export async function GET(req: Request) {
       prisma.notification.count({ where: { userId: user.id, read: false } }),
     ]);
 
-    return NextResponse.json({
-      ok: true,
-      items: notifications,
-      meta: {
-        total,
-        unreadCount,
-        page,
-        pages: Math.ceil(total / limit),
+    return NextResponse.json(
+      {
+        ok: true,
+        items: notifications ?? [],
+        meta: {
+          total,
+          unreadCount,
+          page,
+          limit,
+          pages: Math.ceil(total / limit) || 0,
+        },
       },
-    });
-  } catch (err: any) {
-    console.error("Error fetching notifications:", err);
-    return NextResponse.json({ message: "Server Error" }, { status: 500 });
+      { status: 200 }
+    );
+  } catch (err) {
+    return handleRouteError(err);
   }
 }

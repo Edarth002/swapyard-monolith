@@ -3,6 +3,11 @@ import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { verifyToken } from "@/lib/token";
 import { getOrdersSchema } from "./schema";
+import {
+  handleRouteError,
+  UnauthorizedError,
+  ForbiddenError,
+} from "@/lib/errors";
 
 export const runtime = "nodejs";
 
@@ -18,23 +23,13 @@ async function getCookie(req: Request, name: string) {
   );
 }
 
-async function getAuthenticatedAdmin(req: Request) {
+async function getAuthenticatedUser(req: Request) {
   const token = await getCookie(req, "session");
-
-  if (!token) {
-    return {
-      error: NextResponse.json({ message: "Unauthorized" }, { status: 401 }),
-    };
-  }
+  if (!token) throw new UnauthorizedError("Authentication required");
 
   const payload = await verifyToken(token);
   const userId = typeof payload === "string" ? payload : payload?.userId;
-
-  if (!userId) {
-    return {
-      error: NextResponse.json({ message: "Unauthorized" }, { status: 401 }),
-    };
-  }
+  if (!userId) throw new UnauthorizedError("Invalid or expired session token");
 
   const user = await prisma.user.findUnique({
     where: { id: userId },
@@ -47,52 +42,45 @@ async function getAuthenticatedAdmin(req: Request) {
     },
   });
 
-  if (!user) {
-    return {
-      error: NextResponse.json({ message: "User does not exist" }, { status: 404 }),
-    };
-  }
-  
-  if (user.role !== "ADMIN") {
-    return {
-      error: NextResponse.json({ message: "Forbidden" }, { status: 403 }),
-    };
-  }
+  if (!user) throw new UnauthorizedError("User account not found");
 
-  return { user };
+  return user;
 }
 
 export async function GET(req: Request) {
   try {
-    const auth = await getAuthenticatedAdmin(req);
-    if ("error" in auth) return auth.error;
-
+    const user = await getAuthenticatedUser(req);
     const { searchParams } = new URL(req.url);
 
     const rawQuery = {
       status: searchParams.get("status") ?? undefined,
+      scope: searchParams.get("scope") ?? undefined,
       page: searchParams.get("page") ?? undefined,
       limit: searchParams.get("limit") ?? undefined,
     };
 
-    const validatedQuery = getOrdersSchema.safeParse(rawQuery);
+    // Parse query parameters directly: throws ZodError -> 400 Bad Request
+    const { status, scope, page, limit } = getOrdersSchema.parse(rawQuery);
 
-    if (!validatedQuery.success) {
-      return NextResponse.json(
-        {
-          message: "Invalid query parameters",
-          errors: validatedQuery.error.flatten().fieldErrors,
-        },
-        { status: 400 }
-      );
+    if (scope === "admin" && user.role !== "ADMIN") {
+      throw new ForbiddenError("Admin access required for this scope");
     }
 
-    const { status, page, limit } = validatedQuery.data;
     const skip = (page - 1) * limit;
 
-    // No buyerId / sellerId filter here on purpose — admin sees every order.
     const where: Prisma.OrderWhereInput = {
       ...(status ? { status } : {}),
+      ...(scope === "buyer"
+        ? { buyerId: user.id }
+        : scope === "seller"
+        ? {
+            items: {
+              some: {
+                sellerId: user.id,
+              },
+            },
+          }
+        : {}),
     };
 
     const [orders, total] = await Promise.all([
@@ -136,7 +124,8 @@ export async function GET(req: Request) {
             },
           },
           payment: true,
-          payouts: true,
+          // Payouts contain seller bank details; expose only to admins
+          ...(user.role === "ADMIN" ? { payouts: true } : {}),
         },
         orderBy: { createdAt: "desc" },
         skip,
@@ -148,18 +137,18 @@ export async function GET(req: Request) {
     return NextResponse.json(
       {
         ok: true,
-        items: orders,
+        items: orders ?? [],
         meta: {
           total,
           page,
           limit,
-          pages: Math.ceil(total / limit),
+          pages: Math.ceil(total / limit) || 0,
+          scope,
         },
       },
       { status: 200 }
     );
   } catch (error) {
-    console.error("Error fetching admin orders:", error);
-    return NextResponse.json({ message: "Server error" }, { status: 500 });
+    return handleRouteError(error);
   }
 }

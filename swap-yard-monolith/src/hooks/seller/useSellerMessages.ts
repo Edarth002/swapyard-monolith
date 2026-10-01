@@ -61,13 +61,13 @@ export function useSellerMessages() {
                 if (!res.ok) throw new Error(data.message || "Failed to load chats");
                 
                 setChats(data.conversations || []);
-                if (data.conversations?.length > 0) {
-                    setActiveChatId(data.conversations[0].id);
+                if (data?.conversations?.length > 0) {
+                    setActiveChatId(data?.conversations[0]?.id);
                 }
             } catch (err) {
                 console.warn("Backend not ready, using mock chats.");
                 setChats(MOCK_CHATS);
-                setActiveChatId(MOCK_CHATS[0].id);
+                setActiveChatId(MOCK_CHATS[0]?.id);
             } finally {
                 setIsLoadingChats(false);
             }

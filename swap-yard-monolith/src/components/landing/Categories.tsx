@@ -43,10 +43,10 @@ export const Categories = () => {
     useEffect(() => {
         const fetchCategories = async () => {
             try {
-                const res = await fetch("/api/category");
+                const res = await fetch("/api/categories");
                 const data = await res.json();
-
-               const formatted = data.map((cat: any) => ({
+                const data1 = data.data
+               const formatted = data1.map((cat: any) => ({
                 title: cat.name,
                 href: `/listings?category=${encodeURIComponent(cat.name)}`,
                 image: cat.image || "/assets/images/placeholder.jpg",

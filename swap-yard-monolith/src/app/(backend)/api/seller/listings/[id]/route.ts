@@ -6,10 +6,22 @@ import {
 } from "@/app/(backend)/utils/cloudinary";
 import { prisma } from "@/lib/prisma";
 import { verifyToken } from "@/lib/token";
-import { updateListingSchema } from "../schema";
+import { updateListingSchema } from "../../../listings/schema";
 import { createSlug } from "@/lib/slugGenerator";
+import {
+  handleRouteError,
+  UnauthorizedError,
+  ForbiddenError,
+  NotFoundError,
+  AppError,
+} from "@/lib/errors";
+import { z } from "zod";
 
 export const runtime = "nodejs";
+
+const idParamSchema = z.object({
+  id: z.string().trim().cuid({ message: "Invalid listing ID format" }),
+});
 
 async function getCookie(req: Request, name: string) {
   const cookie = req.headers.get("cookie");
@@ -31,122 +43,71 @@ function toNullableString(value: FormDataEntryValue | null) {
 
 async function getAuthenticatedSeller(req: Request) {
   const token = await getCookie(req, "session");
-
-  if (!token) {
-    return {
-      error: NextResponse.json({ message: "Unauthorized" }, { status: 401 }),
-    };
-  }
+  if (!token) throw new UnauthorizedError("Authentication required");
 
   const payload = await verifyToken(token);
   const userId = typeof payload === "string" ? payload : payload?.userId;
-
-  if (!userId) {
-    return {
-      error: NextResponse.json({ message: "Unauthorized" }, { status: 401 }),
-    };
-  }
+  if (!userId) throw new UnauthorizedError("Invalid or expired session token");
 
   const user = await prisma.user.findUnique({
     where: { id: userId },
     select: { id: true, role: true },
   });
 
-  if (!user) {
-    return {
-      error: NextResponse.json({ message: "User does not exist" }, { status: 404 }),
-    };
-  }
-
+  if (!user) throw new UnauthorizedError("User account not found");
   if (user.role !== "SELLER") {
-    return {
-      error: NextResponse.json(
-        { message: "User is not authorized" },
-        { status: 403 }
-      ),
-    };
+    throw new ForbiddenError("Only sellers can manage listings");
   }
 
-  return { user };
+  return user;
 }
 
-
 export async function GET(
-  _req: Request,
-  ctx: { params: Promise<{ slug: string }> }
+  req: Request,
+  ctx: { params: Promise<{ id: string }> }
 ) {
   try {
-    const { slug } = await ctx.params;
+    const { id } = idParamSchema.parse(await ctx.params);
+    const user = await getAuthenticatedSeller(req);
 
-    const listing = await prisma.listing.findUnique({
-      where: { slug },
+    const listing = await prisma.listing.findFirst({
+      where: {
+        id,
+        sellerId: user.id,
+      },
       include: {
         images: true,
-        category: {
-          select: {
-            id: true,
-            name: true,
-            image: true,
-          },
-        },
-        seller: {
-          select: {
-            id: true,
-            firstname: true,
-            lastname: true,
-            image: true,
-          },
-        },
+        category: true,
       },
     });
 
     if (!listing) {
-      return NextResponse.json(
-        { message: "Listing not found" },
-        { status: 404 }
-      );
+      throw new NotFoundError("Listing not found");
     }
 
     return NextResponse.json(
-      { ok: true, listing },
+      {
+        ok: true,
+        listing: {
+          ...listing,
+          images: listing.images ?? [],
+        },
+      },
       { status: 200 }
     );
   } catch (err) {
-    console.error("Error fetching listing:", err);
-
-    return NextResponse.json(
-      { message: "Server error" },
-      { status: 500 }
-    );
+    return handleRouteError(err);
   }
 }
 
 export async function PATCH(
   req: Request,
-  ctx: { params: Promise<{ slug: string }> }
+  ctx: { params: Promise<{ id: string }> }
 ) {
   let newlyUploaded: Array<{ url: string; public_id: string }> = [];
 
   try {
-    const { slug } = await ctx.params;
-
-    const auth = await getAuthenticatedSeller(req);
-    if ("error" in auth) return auth.error;
-    const { user } = auth;
-
-    //Here you first locate listing by slug to get its ID and current images, then you perform the update using the ID. This way you can handle slug changes and image replacements correctly without losing track of the listing.
-    const existing = await prisma.listing.findUnique({
-      where: { slug },
-      include: { images: true },
-    });
-
-    if (!existing) {
-      return NextResponse.json({ message: "Listing not found" }, { status: 404 });
-    }
-
-    if (existing.sellerId !== user.id) {
-      return NextResponse.json({ message: "Forbidden" }, { status: 403 });
-    }
+    const { id } = idParamSchema.parse(await ctx.params);
 
     const formData = await req.formData();
 
@@ -189,18 +150,6 @@ export async function PATCH(
           : false,
     };
 
-    const validatedInput = updateListingSchema.safeParse(rawInput);
-
-    if (!validatedInput.success) {
-      return NextResponse.json(
-        {
-          message: "Input does not meet required schema",
-          errors: validatedInput.error.flatten().fieldErrors,
-        },
-        { status: 400 }
-      );
-    }
-
     const {
       name,
       description,
@@ -214,8 +163,21 @@ export async function PATCH(
       contact,
       categoryId,
       replaceImages,
-    } = validatedInput.data;
+    } = updateListingSchema.parse(rawInput);
 
+    const user = await getAuthenticatedSeller(req);
+
+    const existing = await prisma.listing.findFirst({
+      where: {
+        id,
+        sellerId: user.id,
+      },
+      include: { images: true },
+    });
+
+    if (!existing) {
+      throw new NotFoundError("Listing not found");
+    }
 
     const data: Prisma.ListingUpdateInput = {};
 
@@ -231,7 +193,36 @@ export async function PATCH(
     if (contact !== undefined) data.contact = contact;
 
     if (name !== undefined && name !== existing.name) {
-      data.slug = createSlug(name);
+      const baseSlug = createSlug(name);
+      let newSlug = baseSlug;
+
+      const slugTaken = async (candidate: string) => {
+        const [liveMatch, historyMatch] = await Promise.all([
+          prisma.listing.findUnique({
+            where: { slug: candidate },
+            select: { id: true },
+          }),
+          prisma.listingSlugHistory.findFirst({
+            where: { slug: candidate },
+            select: { id: true },
+          }),
+        ]);
+        const liveConflict = liveMatch && liveMatch.id !== existing.id;
+        return Boolean(liveConflict || historyMatch);
+      };
+
+      let counter = 1;
+      while (await slugTaken(newSlug)) {
+        newSlug = `${baseSlug}-${counter}`;
+        counter++;
+      }
+
+      data.slug = newSlug;
+      data.SlugHistory = {
+        create: {
+          slug: existing.slug,
+        },
+      };
     }
 
     if (categoryId !== undefined) {
@@ -242,10 +233,7 @@ export async function PATCH(
         });
 
         if (!categoryExists) {
-          return NextResponse.json(
-            { message: "Selected category does not exist" },
-            { status: 400 }
-          );
+          throw new AppError("Selected category does not exist", 400);
         }
 
         data.category = { connect: { id: categoryId } };
@@ -256,9 +244,7 @@ export async function PATCH(
 
     const images = formData
       .getAll("images")
-      .filter(
-        (file): file is File => file instanceof File && file.size > 0
-      );
+      .filter((file): file is File => file instanceof File && file.size > 0);
 
     if (images.length > 0) {
       newlyUploaded = await uploadManyImageFiles(images, {
@@ -282,7 +268,7 @@ export async function PATCH(
     }
 
     const listing = await prisma.listing.update({
-      where: { slug: existing.slug },
+      where: { id: existing.id },
       data,
       include: {
         images: true,
@@ -307,77 +293,73 @@ export async function PATCH(
     if (images.length > 0 && replaceImages) {
       const oldPublicIds = existing.images
         .map((img) => img.publicId)
-        .filter((id): id is string => Boolean(id));
+        .filter((oldId): oldId is string => Boolean(oldId));
 
       if (oldPublicIds.length) {
-        await deleteManyByPublicIds(oldPublicIds);
+        await deleteManyByPublicIds(oldPublicIds).catch(() => null);
       }
     }
 
     return NextResponse.json(
-      { message: "Listing updated successfully", listing },
+      {
+        ok: true,
+        message: "Listing updated successfully",
+        listing,
+      },
       { status: 200 }
     );
   } catch (err) {
-    console.error("Error updating listing:", err);
-
-    //rollback newly uploaded images on cloudinary if something goes wrong during upload (Principle: Atomicity)
-
     if (newlyUploaded.length) {
       const ids = newlyUploaded.map((img) => img.public_id).filter(Boolean);
       if (ids.length) {
-        await deleteManyByPublicIds(ids);
+        await deleteManyByPublicIds(ids).catch(() => null);
       }
     }
 
-    return NextResponse.json({ message: "Server error" }, { status: 500 });
+    return handleRouteError(err);
   }
 }
 
 export async function DELETE(
   req: Request,
-  ctx: { params: Promise<{ slug: string }> }
+  ctx: { params: Promise<{ id: string }> }
 ) {
   try {
-    const { slug } = await ctx.params;
+    const { id } = idParamSchema.parse(await ctx.params);
+    const user = await getAuthenticatedSeller(req);
 
-    const auth = await getAuthenticatedSeller(req);
-    if ("error" in auth) return auth.error;
-
-    const { user } = auth;
-
-    const existing = await prisma.listing.findUnique({
-      where: { slug },
-      include: { images: true },
+    const existing = await prisma.listing.findFirst({
+      where: {
+        id,
+        sellerId: user.id,
+      },
+      select: { id: true },
     });
 
     if (!existing) {
-      return NextResponse.json({ message: "Listing not found" }, { status: 404 });
+      throw new NotFoundError("Listing not found");
     }
 
-    if (existing.sellerId !== user.id) {
-      return NextResponse.json({ message: "Forbidden" }, { status: 403 });
-    }
+    const listing = await prisma.$transaction(async (tx) => {
+      await tx.cartItem.deleteMany({
+        where: { listingId: existing.id },
+      });
 
-    await prisma.listing.delete({
-      where: { slug },
+      return await tx.listing.update({
+        where: { id: existing.id },
+        data: { status: "REMOVED" },
+      });
     });
 
-    const publicIds = existing.images
-      .map((img) => img.publicId)
-      .filter((publicId): publicId is string => Boolean(publicId));
-
-    if (publicIds.length) {
-      await deleteManyByPublicIds(publicIds);
-    }
-
-
     return NextResponse.json(
-      { message: "Listing deleted successfully" },
+      {
+        ok: true,
+        message: "Listing removed successfully",
+        listing,
+      },
       { status: 200 }
     );
   } catch (err) {
-    console.error("Error deleting listing:", err);
-    return NextResponse.json({ message: "Server error" }, { status: 500 });
+    return handleRouteError(err);
   }
 }

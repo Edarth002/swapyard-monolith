@@ -23,14 +23,14 @@ const ROUTE_PERMISSIONS: Array<{
 
  //Public routes:no auth required
 
-  { methods: ["GET"], pattern: /^\/api\/listing(\/|$)/, roles: [], public: true },
-  { methods: ["GET"], pattern: /^\/api\/category(\/|$)/, roles: [], public: true },
+  { methods: ["GET"], pattern: /^\/api\/listings(\/|$)/, roles: [], public: true },
+  { methods: ["GET"], pattern: /^\/api\/categories(\/|$)/, roles: [], public: true },
   { methods: ["GET"], pattern: /^\/api\/shop(\/|$)/, roles: [], public: true },
   { methods: ["POST"], pattern: /^\/api\/auth\/(login|signup|resetpassword|token|oauth|)$/, roles: [], public: true },
 
-  { methods: ["POST"], pattern: /^\/api\/listing$/, roles: ["SELLER", "ADMIN"] },
+  { methods: ["POST"], pattern: /^\/api\/listings$/, roles: ["SELLER", "ADMIN"] },
 
-  { methods: ["PUT", "PATCH", "DELETE"], pattern: /^\/api\/listing\/[^/]+$/, roles: ["SELLER", "ADMIN"] },
+  { methods: ["PUT", "PATCH", "DELETE"], pattern: /^\/api\/listings\/[^/]+$/, roles: ["SELLER", "ADMIN"] },
 
   { methods: ["POST"], pattern: /^\/api\/orders\/checkout(\/|$)/, roles: ["BUYER"] },
 
@@ -41,10 +41,10 @@ const ROUTE_PERMISSIONS: Array<{
 
   { methods: ["GET", "PUT", "PATCH"], pattern: /^\/api\/auth\/me(\/|$)/, roles: ["BUYER", "SELLER", "ADMIN"] },
 
-  { methods: ["POST"], pattern: /^\/api\/review$/, roles: ["BUYER"] },
-  { methods: ["DELETE", "PATCH"], pattern: /^\/api\/review\/[^/]+$/, roles: ["ADMIN"] },
+  { methods: ["POST"], pattern: /^\/api\/reviews$/, roles: ["BUYER"] },
+  { methods: ["DELETE", "PATCH"], pattern: /^\/api\/reviews\/[^/]+$/, roles: ["ADMIN"] },
 
-  { methods: ["POST"], pattern: /^\/api\/verification\/payout$/, roles: ["SELLER"] },
+  { methods: ["POST"], pattern: /^\/api\/verifications\/payout$/, roles: ["SELLER"] },
 ];
 
 

@@ -75,7 +75,7 @@ useEffect(() => {
    try {
 
      const res = await fetch(
-       "/api/category",
+       "/api/categories",
        { cache:"no-store" }
      );
 
@@ -264,7 +264,7 @@ images.forEach(image=>{
 
 
 const res = await fetch(
- "/api/listing",
+ "/api/listings",
  {
   method:"POST",
   headers:{

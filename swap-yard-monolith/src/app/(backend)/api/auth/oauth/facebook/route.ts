@@ -2,6 +2,13 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { createToken } from "@/lib/token";
 import { z } from "zod";
+import {
+  handleRouteError,
+  UnauthorizedError,
+  AppError,
+} from "@/lib/errors";
+
+export const runtime = "nodejs";
 
 const facebookAuthSchema = z.object({
   accessToken: z.string().trim().min(1, "Facebook access token is required"),
@@ -16,17 +23,8 @@ export async function POST(req: Request) {
   try {
     const body = await req.json();
 
-    const validatedBody = facebookAuthSchema.safeParse(body);
-
-    if (!validatedBody.success) {
-      return NextResponse.json(
-        {
-          message: "Invalid request body",
-          errors: validatedBody.error.flatten(),
-        },
-        { status: 400 }
-      );
-    }
+    // Throws ZodError on bad body -> handleRouteError returns 400 Bad Request
+    const { accessToken } = facebookAuthSchema.parse(body);
 
     const validatedEnv = facebookEnvSchema.safeParse({
       FACEBOOK_APP_ID: process.env.FACEBOOK_APP_ID,
@@ -34,17 +32,14 @@ export async function POST(req: Request) {
     });
 
     if (!validatedEnv.success) {
-      console.error("Facebook env validation error:", validatedEnv.error.flatten());
-
-      return NextResponse.json(
-        { message: "Facebook OAuth is not configured correctly" },
-        { status: 500 }
+      console.error(
+        "Facebook env configuration error:",
+        validatedEnv.error.flatten()
       );
+      throw new AppError("Facebook OAuth configuration missing or invalid", 500);
     }
 
-    const { accessToken } = validatedBody.data;
     const { FACEBOOK_APP_ID, FACEBOOK_APP_SECRET } = validatedEnv.data;
-
     const appAccessToken = `${FACEBOOK_APP_ID}|${FACEBOOK_APP_SECRET}`;
 
     const debugUrl =
@@ -55,10 +50,11 @@ export async function POST(req: Request) {
     const debugRes = await fetch(debugUrl);
     const debugJson = await debugRes.json();
 
+    // Guardrail against undefined external response structure
     const data = debugJson?.data;
 
-    if (!debugRes.ok || !data?.is_valid ||  data.app_id !== FACEBOOK_APP_ID) {
-      return NextResponse.json({ message: "Invalid Facebook token" }, { status: 401 });
+    if (!debugRes.ok || !data?.is_valid || data?.app_id !== FACEBOOK_APP_ID) {
+      throw new UnauthorizedError("Invalid or expired Facebook access token");
     }
 
     const meUrl =
@@ -70,18 +66,15 @@ export async function POST(req: Request) {
     const meJson = await meRes.json();
 
     if (!meRes.ok) {
-      return NextResponse.json(
-        { message: "Failed to fetch Facebook profile" },
-        { status: 401 }
-      );
+      throw new UnauthorizedError("Failed to retrieve Facebook profile data");
     }
 
     const email = meJson?.email;
 
-    if (typeof email !== "string") {
-      return NextResponse.json(
-        { message: "Facebook did not return an email. Use normal login." },
-        { status: 400 }
+    if (typeof email !== "string" || !email) {
+      throw new AppError(
+        "Facebook did not return a valid email address. Please authenticate using standard credentials.",
+        400
       );
     }
 
@@ -100,16 +93,19 @@ export async function POST(req: Request) {
     });
 
     if (!user) {
-      return NextResponse.json(
-        { message: "No account found for this email. Please sign up first." },
-        { status: 401 }
+      throw new UnauthorizedError(
+        "No account found associated with this Facebook email. Please sign up first."
       );
     }
 
     const sessionToken = await createToken(user.id, user.role);
 
     const res = NextResponse.json(
-      { message: "Login successful", user },
+      {
+        ok: true,
+        message: "Login successful",
+        user,
+      },
       { status: 200 }
     );
 
@@ -123,7 +119,6 @@ export async function POST(req: Request) {
 
     return res;
   } catch (err) {
-    console.error("Facebook OAuth login error:", err);
-    return NextResponse.json({ message: "Internal server error" }, { status: 500 });
+    return handleRouteError(err);
   }
 }
