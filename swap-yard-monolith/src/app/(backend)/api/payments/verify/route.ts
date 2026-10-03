@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { z } from "zod";
 import { handleRouteError, AppError } from "@/lib/errors";
-
+import { logger } from "@/lib/logger"; 
 export const runtime = "nodejs";
 
 const verifyPaymentQuerySchema = z.object({
@@ -10,12 +10,26 @@ const verifyPaymentQuerySchema = z.object({
 });
 
 export async function GET(req: Request) {
+  const requestId =
+    req.headers.get("x-request-id") ||
+    (typeof crypto !== "undefined" && crypto.randomUUID
+      ? crypto.randomUUID()
+      : `req_${Date.now()}`);
+
   try {
     const { searchParams } = new URL(req.url);
 
     const { reference } = verifyPaymentQuerySchema.parse({
       reference: searchParams.get("reference"),
     });
+
+    const log = logger.child({
+      requestId,
+      reference,
+      endpoint: "/api/payments/paystack/verify",
+    });
+
+    log.info("Contacting Paystack gateway to verify payment");
 
     const paystackRes = await fetch(
       `https://api.paystack.co/transaction/verify/${encodeURIComponent(reference)}`,
@@ -27,6 +41,14 @@ export async function GET(req: Request) {
     const paystackData = await paystackRes.json();
 
     if (!paystackRes.ok || !paystackData.status) {
+      log.error(
+        {
+          statusCode: paystackRes.status,
+          paystackData,
+        },
+        "Paystack verification request rejected"
+      );
+
       throw new AppError(
         paystackData?.message ?? "Payment verification failed with provider",
         paystackRes.status || 502
@@ -38,6 +60,11 @@ export async function GET(req: Request) {
     const orderId = metadata?.orderId;
 
     if (status !== "success") {
+      log.warn(
+        { gatewayStatus: status, orderId, paymentId },
+        "Transaction verified but status is not successful"
+      );
+
       return NextResponse.json(
         {
           ok: true,
@@ -45,11 +72,10 @@ export async function GET(req: Request) {
           verified: false,
           orderId: orderId ?? null,
         },
-        { status: 200 }
+        { status: 200, headers: { "x-request-id": requestId } }
       );
     }
 
-    // Best-effort local update for immediate frontend redirect responsiveness
     if (paymentId && orderId) {
       const payment = await prisma.payment.findUnique({
         where: { id: paymentId },
@@ -74,13 +100,28 @@ export async function GET(req: Request) {
               data: { status: "PAID" },
             }),
           ]);
+
+          log.info(
+            { orderId, paymentId, amountKobo: amount },
+            "Order and payment successfully transitioned to PAID/SUCCESS"
+          );
         } else {
-          console.error("[Payments verify] Amount mismatch", {
-            expectedKobo,
-            received: amount,
-            paymentId,
-          });
+          log.error(
+            {
+              event: "PAYMENT_AMOUNT_MISMATCH",
+              expectedKobo,
+              receivedKobo: amount,
+              paymentId,
+              orderId,
+            },
+            "Payment amount mismatch detected during verification"
+          );
         }
+      } else if (payment?.status === "SUCCESS") {
+        log.info(
+          { orderId, paymentId },
+          "Payment was already transitioned to SUCCESS (idempotent pass)"
+        );
       }
     }
 
@@ -91,9 +132,12 @@ export async function GET(req: Request) {
         verified: true,
         orderId: orderId ?? null,
       },
-      { status: 200 }
+      {
+        status: 200,
+        headers: { "x-request-id": requestId },
+      }
     );
   } catch (error) {
-    return handleRouteError(error);
+    return handleRouteError(error, req);
   }
 }
