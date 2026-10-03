@@ -10,7 +10,7 @@ const slugParamSchema = z.object({
     .string()
     .trim()
     .min(1, "Slug cannot be empty")
-    .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/, "Invalid slug format"),
+    .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/i, "Invalid slug format"),
 });
 
 export async function GET(

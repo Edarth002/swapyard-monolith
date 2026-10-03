@@ -9,6 +9,7 @@ import {
   NotFoundError,
   AppError,
 } from "@/lib/errors";
+import { logger } from "@/lib/logger"; //
 
 export const runtime = "nodejs";
 
@@ -45,11 +46,26 @@ async function getUser(req: Request) {
 }
 
 export async function POST(req: Request) {
+  const requestId =
+    req.headers.get("x-request-id") ||
+    (typeof crypto !== "undefined" && crypto.randomUUID
+      ? crypto.randomUUID()
+      : `req_${Date.now()}`);
+
   try {
     const user = await getUser(req);
 
     const body = await req.json();
     const { orderId } = initiatePaymentSchema.parse(body);
+
+    const log = logger.child({
+      requestId,
+      orderId,
+      userId: user.id,
+      endpoint: "/api/payments/paystack/initiate",
+    });
+
+    log.info("Initiating Paystack payment flow");
 
     const order = await prisma.order.findUnique({
       where: { id: orderId },
@@ -74,7 +90,6 @@ export async function POST(req: Request) {
 
     const amountInKobo = Math.round(order.totalAmount.toNumber() * 100);
 
-    // Row-level lock on the Payment record
     const reference = await prisma.$transaction(async (tx) => {
       const [locked] = await tx.$queryRaw<{ status: string }[]>`
         SELECT status FROM Payment WHERE id = ${order.payment!.id} FOR UPDATE
@@ -97,6 +112,8 @@ export async function POST(req: Request) {
 
       return ref;
     });
+
+    log.info({ reference, amountInKobo }, "Acquired payment lock and generated reference");
 
     const baseUrl = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
     const paystackRes = await fetch("https://api.paystack.co/transaction/initialize", {
@@ -121,9 +138,21 @@ export async function POST(req: Request) {
     const paystackData = await paystackRes.json();
 
     if (!paystackRes.ok || !paystackData.status) {
-      console.error("[Paystack initialize] API error:", paystackData);
-      throw new AppError(paystackData?.message ?? "Paystack payment initialization failed", 502);
+      log.error(
+        {
+          statusCode: paystackRes.status,
+          paystackError: paystackData,
+          reference,
+        },
+        "Paystack initialization rejected by payment gateway"
+      );
+      throw new AppError(
+        paystackData?.message ?? "Paystack payment initialization failed",
+        502
+      );
     }
+
+    log.info({ reference }, "Paystack initialization successful");
 
     return NextResponse.json(
       {
@@ -133,9 +162,12 @@ export async function POST(req: Request) {
         amountInKobo,
         reference,
       },
-      { status: 200 }
+      {
+        status: 200,
+        headers: { "x-request-id": requestId },
+      }
     );
   } catch (error) {
-    return handleRouteError(error);
+    return handleRouteError(error, req);
   }
 }

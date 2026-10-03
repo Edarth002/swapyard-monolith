@@ -9,6 +9,7 @@ import {
   AppError,
 } from "@/lib/errors";
 import { Prisma } from "@prisma/client";
+import { logger } from "@/lib/logger"; // 👈 1. Import logger
 
 export const runtime = "nodejs";
 
@@ -41,25 +42,48 @@ async function getUser(req: Request) {
 }
 
 export async function POST(req: Request) {
+  // 👈 2. Extract or generate trace correlation ID
+  const requestId =
+    req.headers.get("x-request-id") ||
+    (typeof crypto !== "undefined" && crypto.randomUUID
+      ? crypto.randomUUID()
+      : `req_${Date.now()}`);
+
   const idempotencyKey = req.headers.get("Idempotency-Key");
   if (!idempotencyKey) {
-    return handleRouteError(new AppError("Idempotency-Key header is required", 400));
+    return handleRouteError(
+      new AppError("Idempotency-Key header is required", 400),
+      req
+    );
   }
+
+  // 👈 3. Scoped child logger for checkout lifecycle
+  const log = logger.child({
+    requestId,
+    idempotencyKey,
+    endpoint: "/api/checkout",
+  });
 
   try {
     const user = await getUser(req);
+    log.info({ userId: user.id }, "Checkout process started");
 
     const existingEntry = await prisma.idempotencyKey.findUnique({
       where: { key: idempotencyKey },
     });
 
     if (existingEntry?.status === "COMPLETED") {
-      return NextResponse.json(existingEntry.response, { status: 200 });
+      log.info("Idempotency match: Returning cached completed response");
+      return NextResponse.json(existingEntry.response, {
+        status: 200,
+        headers: { "x-request-id": requestId },
+      });
     }
 
     if (existingEntry?.status === "PENDING") {
       const twoMinutesAgo = new Date(Date.now() - 2 * 60_000);
       if (existingEntry.updatedAt > twoMinutesAgo) {
+        log.warn("Concurrent request detected with active PENDING idempotency key");
         throw new ConflictError("Request is already being processed");
       }
     }
@@ -71,7 +95,6 @@ export async function POST(req: Request) {
     });
 
     const body = await req.json();
-    // Direct parse -> throws ZodError automatically mapped to 400 Bad Request
     const { pickupLocation, pickupNote } = checkoutSchema.parse(body);
 
     const cart = await prisma.cart.findUnique({
@@ -117,10 +140,11 @@ export async function POST(req: Request) {
     });
 
     const deliveryFee = new Prisma.Decimal(500);
-    const platformCommission = subtotal.mul(0.015);
+    const platformCommission = subtotal.mul(new Prisma.Decimal("0.015"));
     const totalAmount = subtotal.plus(deliveryFee);
     const listingIds = orderItemsData.map((i) => i.listingId);
 
+    // 👈 4. Atomic database mutation (order + items + payment + stock hold + cart purge)
     const newOrder = await prisma.$transaction(
       async (tx) => {
         const created = await tx.order.create({
@@ -157,8 +181,20 @@ export async function POST(req: Request) {
       { timeout: 15_000 }
     );
 
-    // --- Paystack initialization (external call outside atomic DB transaction) ---
+    log.info(
+      {
+        orderId: newOrder.id,
+        paymentId: newOrder.payment?.id,
+        itemCount: orderItemsData.length,
+        totalAmount: totalAmount.toString(),
+      },
+      "Order created and stock marked SOLD successfully in transaction"
+    );
+
+    // 👈 5. Paystack initialization (external HTTP boundary outside DB transaction)
     const baseUrl = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
+    const amountInKobo = Math.round(totalAmount.mul(100).toNumber());
+
     const paystackRes = await fetch(
       "https://api.paystack.co/transaction/initialize",
       {
@@ -169,16 +205,29 @@ export async function POST(req: Request) {
         },
         body: JSON.stringify({
           email: user.email,
-          amount: Math.round(Number(totalAmount) * 100),
+          amount: amountInKobo,
           reference: newOrder.payment?.id,
           callback_url: `${baseUrl}/payment/success`,
+          metadata: {
+            orderId: newOrder.id,
+            paymentId: newOrder.payment?.id,
+          },
         }),
       }
     );
 
     const paystackData = await paystackRes.json();
 
-    if (!paystackData.status) {
+    if (!paystackRes.ok || !paystackData.status) {
+      log.warn(
+        {
+          orderId: newOrder.id,
+          paymentId: newOrder.payment?.id,
+          paystackError: paystackData,
+        },
+        "Order created but Paystack initialization failed"
+      );
+
       return NextResponse.json(
         {
           ok: false,
@@ -188,7 +237,10 @@ export async function POST(req: Request) {
             paystackData?.message ??
             "Failed to initialize payment with Paystack",
         },
-        { status: 207 }
+        {
+          status: 207,
+          headers: { "x-request-id": requestId },
+        }
       );
     }
 
@@ -204,8 +256,17 @@ export async function POST(req: Request) {
       data: { status: "COMPLETED", response: finalResponse as any },
     });
 
-    return NextResponse.json(finalResponse, { status: 200 });
+    log.info(
+      { orderId: newOrder.id, paymentId: newOrder.payment?.id },
+      "Checkout completed and idempotency state marked COMPLETED"
+    );
+
+    return NextResponse.json(finalResponse, {
+      status: 200,
+      headers: { "x-request-id": requestId },
+    });
   } catch (error) {
-    return handleRouteError(error);
+    // 👈 6. Pass req to error handler for uniform trace and status logging
+    return handleRouteError(error, req);
   }
 }
