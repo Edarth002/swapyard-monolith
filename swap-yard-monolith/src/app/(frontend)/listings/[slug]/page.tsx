@@ -96,7 +96,7 @@ export default function ProductDetailsPage() {
       setIsLoadingRelated(true);
       try {
         const res = await fetch(
-          `/api/listings?category=${encodeURIComponent(categoryName)}&exclude=${productId}&limit=5`
+          `/api/listings?category=${encodeURIComponent(categoryName)}&exclude=${productId}&limit=5&status=AVAILABLE`
         );
         const data = await res.json();
         if (!cancelled && data.ok) {
@@ -438,9 +438,7 @@ export default function ProductDetailsPage() {
                     </div>
                   </div>
                 </div>
-                <button className="text-[11px] font-extrabold text-[#002147] hover:underline cursor-pointer">
-                  View Profile
-                </button>
+               
               </div>
             </div>
           </div>
