@@ -1,8 +1,8 @@
 "use client";
 
-import React from "react";
+import React, { useState } from "react";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { User, Package, Mail, Heart, Ticket, LogOut } from "lucide-react";
 
 export default function UserDashboardLayout({
@@ -11,6 +11,8 @@ export default function UserDashboardLayout({
     children: React.ReactNode;
 }) {
     const pathname = usePathname();
+        const router = useRouter();
+        const [isLoggingOut, setIsLoggingOut] = useState(false);
 
     const SIDEBAR_LINKS = [
         { name: "My Account", icon: <User size={20} />, href: "/profile" },
@@ -18,6 +20,26 @@ export default function UserDashboardLayout({
         { name: "Notifications", icon: <Mail size={20} />, href: "/notifications" },
         { name: "Wishlist", icon: <Heart size={20} />, href: "/wishlist" },
     ];
+
+    const handleLogout = async () => {
+        try {
+            setIsLoggingOut(true);
+            const res = await fetch("/api/auth/logout", {
+                method: "POST",
+            });
+
+            if (res.ok) {
+                router.push("/auth/login");
+            } else {
+                console.error("Logout failed");
+                setIsLoggingOut(false);
+            }
+        } catch (error) {
+            console.error("An error occurred during logout:", error);
+            setIsLoggingOut(false);
+        }
+    };
+
 
     return (
         <div className="min-h-screen bg-gray-50/50 flex flex-col md:flex-row">
@@ -47,12 +69,15 @@ export default function UserDashboardLayout({
                     </nav>
                 </div>
 
-                <div className="mt-auto px-4">
-                    <button className="flex items-center gap-3 px-4 py-3 text-sm font-bold text-[#EB3B18] hover:bg-orange-50 rounded-xl transition-colors w-full cursor-pointer">
-                        <LogOut size={20} />
-                        Log out
-                    </button>
-                </div>
+                <button 
+                onClick={handleLogout}
+                disabled={isLoggingOut}
+                aria-label="Log out of account"
+                className="mt-auto flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium text-[#EB3B18] hover:bg-red-50 transition-colors w-full text-left cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                    <LogOut size={18} />
+                    {isLoggingOut ? "Logging out..." : "Log out"}
+                </button>
             </aside>
 
             <main className="w-full">
