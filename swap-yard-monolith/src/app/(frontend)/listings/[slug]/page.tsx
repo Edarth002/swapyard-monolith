@@ -171,6 +171,39 @@ export default function ProductDetailsPage() {
     }
   };
 
+  const handleShare = async () => {
+  if (!product) return;
+
+  const url = `${window.location.origin}/listings/${product.slug ?? slug}`;
+  const shareData = {
+    title: product.name,
+    text: `Check out "${product.name}" for ${formatPrice(product.price)}`,
+    url,
+  };
+
+  try {
+    if (navigator.share && (!navigator.canShare || navigator.canShare(shareData))) {
+      await navigator.share(shareData);
+      return;
+    }
+    await navigator.clipboard.writeText(url);
+    toast.success("Link copied to clipboard!");
+  } catch (err: any) {
+    if (err?.name === "AbortError") return;
+    try {
+      const input = document.createElement("input");
+      input.value = url;
+      document.body.appendChild(input);
+      input.select();
+      document.execCommand("copy");
+      document.body.removeChild(input);
+      toast.success("Link copied to clipboard!");
+    } catch {
+      toast.error("Couldn't share this listing.");
+    }
+  }
+};
+
   const toggleRelatedWishlist = (e: React.MouseEvent, item: any) => {
     e.preventDefault();
     e.stopPropagation();
@@ -346,6 +379,7 @@ export default function ProductDetailsPage() {
                 {createdDaysAgo === 0 ? "Listed today" : `${createdDaysAgo} days ago`}
               </div>
               <button
+               onClick={handleShare}
                 aria-label="Share listing"
                 className="flex items-center gap-1.5 hover:text-gray-900 transition-colors cursor-pointer ml-auto"
               >
