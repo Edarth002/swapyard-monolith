@@ -347,14 +347,14 @@ function ListingsContent() {
               </button>
             </div>
 
-            <div className="w-px h-8 bg-gray-200" aria-hidden="true"></div>
+            {/* <div className="w-px h-8 bg-gray-200" aria-hidden="true"></div> */}
 
-            <div className="flex items-center gap-2">
+            {/* <div className="flex items-center gap-2">
               <span className="text-xs text-gray-500 font-semibold uppercase tracking-wider">Sort By:</span>
               <button className="text-sm font-bold text-gray-900 flex items-center gap-1 hover:text-gray-600 transition-colors cursor-pointer">
                 Newest <ChevronDown className="w-4 h-4" aria-hidden="true" />
               </button>
-            </div>
+            </div> */}
           </div>
         </div>
 
@@ -421,7 +421,7 @@ function ListingsContent() {
               </div>
               <div className="hidden lg:flex items-center gap-3">
                 <span className="text-sm font-medium text-gray-600">Quick View:</span>
-                <button className="flex items-center gap-1.5 px-4 py-2 bg-white border border-gray-200 rounded-full text-xs font-semibold text-gray-700 hover:bg-gray-50 shadow-sm transition-colors cursor-pointer">
+                <button className="flex items-center gap-1.5 px-4 py-2 bg-white border border-gray-200 rounded-full text-xs font-semibold text-gray-700 hover:bg-gray-50 shadow-sm transition-colors">
                   <ShieldCheck className="w-4 h-4 text-green-600" aria-hidden="true" /> Verified Sellers Only
                 </button>
               </div>
