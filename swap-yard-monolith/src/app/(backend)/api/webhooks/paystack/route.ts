@@ -7,7 +7,7 @@ import { logger } from "@/lib/logger"; // 👈 1. Import structured logger
 export const runtime = "nodejs";
 
 export async function POST(req: Request) {
-  // 👈 2. Extract or generate Correlation ID for webhook tracking
+  // Extract or generate Correlation ID for webhook tracking
   const requestId =
     req.headers.get("x-request-id") ||
     (typeof crypto !== "undefined" && crypto.randomUUID
@@ -36,7 +36,7 @@ export async function POST(req: Request) {
       .update(rawBody)
       .digest("hex");
 
-    // 👈 3. Timing-safe comparison to prevent HMAC timing attacks
+    // Timing-safe comparison to prevent HMAC timing attacks
     const signatureBuffer = Buffer.from(signature || "", "utf8");
     const expectedBuffer = Buffer.from(expectedSignature, "utf8");
     const isValidSignature =
@@ -124,7 +124,7 @@ export async function POST(req: Request) {
       );
     }
 
-    // 👈 4. Atomic database state transition
+    // Atomic database state transition
     await prisma.$transaction([
       prisma.payment.update({
         where: {
@@ -153,7 +153,6 @@ export async function POST(req: Request) {
       { status: 200, headers: responseHeaders }
     );
   } catch (error) {
-    // 👈 5. Pass req to error handler for uniform trace logging
     return handleRouteError(error, req);
   }
 }

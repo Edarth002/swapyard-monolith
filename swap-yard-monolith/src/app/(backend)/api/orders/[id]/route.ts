@@ -10,6 +10,11 @@ import {
   AppError,
 } from "@/lib/errors";
 import { z } from "zod";
+import {
+  notify,
+  NotificationType,
+  shortOrderId,
+} from "@/lib/notification";
 
 export const runtime = "nodejs";
 
@@ -212,6 +217,46 @@ export async function PATCH(
       },
       { timeout: 10000 }
     );
+
+    // Notify parties based on the updated order status
+    const formattedId = shortOrderId(order.id);
+    const sellerIds = [
+      ...new Set(
+        order.items
+          .map((item) => item.seller?.id)
+          .filter((sid): sid is string => Boolean(sid))
+      ),
+    ];
+
+    if (newStatus === "SHIPPED") {
+      notify({
+        userId: order.buyer.id,
+        type: NotificationType.ORDER_SHIPPED,
+        message: `Your order ${formattedId} has been shipped.`,
+      });
+    } else if (newStatus === "DELIVERED") {
+      notify({
+        userId: order.buyer.id,
+        type: NotificationType.ORDER_DELIVERED,
+        message: `Your order ${formattedId} has been marked as delivered.`,
+      });
+    } else if (newStatus === "COMPLETED") {
+      notify(
+        sellerIds.map((sellerId) => ({
+          userId: sellerId,
+          type: NotificationType.ORDER_COMPLETED,
+          message: `Order ${formattedId} has been marked completed by the buyer.`,
+        }))
+      );
+    } else if (newStatus === "CANCELLED") {
+      notify(
+        sellerIds.map((sellerId) => ({
+          userId: sellerId,
+          type: NotificationType.ORDER_CANCELLED,
+          message: `Order ${formattedId} has been cancelled.`,
+        }))
+      );
+    }
 
     return NextResponse.json(
       {
