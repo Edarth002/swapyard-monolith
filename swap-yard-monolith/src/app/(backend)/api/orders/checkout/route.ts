@@ -9,7 +9,12 @@ import {
   AppError,
 } from "@/lib/errors";
 import { Prisma } from "@prisma/client";
-import { logger } from "@/lib/logger"; // 👈 1. Import logger
+import { logger } from "@/lib/logger";
+import {
+  notify,
+  NotificationType,
+  shortOrderId,
+} from "@/lib/notification";
 
 export const runtime = "nodejs";
 
@@ -42,7 +47,6 @@ async function getUser(req: Request) {
 }
 
 export async function POST(req: Request) {
-  // 👈 2. Extract or generate trace correlation ID
   const requestId =
     req.headers.get("x-request-id") ||
     (typeof crypto !== "undefined" && crypto.randomUUID
@@ -57,7 +61,7 @@ export async function POST(req: Request) {
     );
   }
 
-  // 👈 3. Scoped child logger for checkout lifecycle
+  // Scoped child logger for checkout lifecycle
   const log = logger.child({
     requestId,
     idempotencyKey,
@@ -67,6 +71,7 @@ export async function POST(req: Request) {
   try {
     const user = await getUser(req);
     log.info({ userId: user.id }, "Checkout process started");
+    
 
     const existingEntry = await prisma.idempotencyKey.findUnique({
       where: { key: idempotencyKey },
@@ -144,7 +149,7 @@ export async function POST(req: Request) {
     const totalAmount = subtotal.plus(deliveryFee);
     const listingIds = orderItemsData.map((i) => i.listingId);
 
-    // 👈 4. Atomic database mutation (order + items + payment + stock hold + cart purge)
+    // Atomic database mutation (order + items + payment + stock hold + cart purge)
     const newOrder = await prisma.$transaction(
       async (tx) => {
         const created = await tx.order.create({
@@ -191,7 +196,26 @@ export async function POST(req: Request) {
       "Order created and stock marked SOLD successfully in transaction"
     );
 
-    // 👈 5. Paystack initialization (external HTTP boundary outside DB transaction)
+    //Notification
+    const formattedId = shortOrderId(newOrder.id);
+    const uniqueSellerIds = [
+      ...new Set(orderItemsData.map((item) => item.sellerId)),
+    ];
+
+    notify([
+      {
+        userId: user.id,
+        type: NotificationType.ORDER_RECEIVED,
+        message: `Your order ${formattedId} has been placed successfully.`,
+      },
+      ...uniqueSellerIds.map((sellerId) => ({
+        userId: sellerId,
+        type: NotificationType.ORDER_RECEIVED,
+        message: `You received a new order ${formattedId}.`,
+      })),
+    ]);
+
+    // Paystack initialization (external HTTP boundary outside DB transaction)
     const baseUrl = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
     const amountInKobo = Math.round(totalAmount.mul(100).toNumber());
 

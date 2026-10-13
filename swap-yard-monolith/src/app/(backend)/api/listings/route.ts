@@ -15,6 +15,7 @@ import {
   ConflictError,
   AppError,
 } from "@/lib/errors";
+import { notify, NotificationType } from "@/lib/notification";
 
 export const runtime = "nodejs";
 
@@ -174,6 +175,12 @@ export async function POST(req: Request) {
       },
       { timeout: 15000 }
     );
+
+    await notify({
+      userId: user.id,
+      type: NotificationType.LISTING_CREATED,
+      message: `Your listing "${validatedData.name}" has been created successfully.`,
+    });
 
     return NextResponse.json(result, { status: 201 });
   } catch (err) {

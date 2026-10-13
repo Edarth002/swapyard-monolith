@@ -10,6 +10,7 @@ import {
   NotFoundError,
   AppError,
 } from "@/lib/errors";
+import { notify } from "@/lib/notification";
 
 export const runtime = "nodejs";
 
@@ -35,7 +36,7 @@ async function getAuthBuyer(req: Request) {
 
   const user = await prisma.user.findUnique({
     where: { id: userId },
-    select: { id: true, role: true },
+    select: { id: true, role: true, firstname: true, lastname: true },
   });
 
   if (!user) throw new UnauthorizedError("User account not found");
@@ -87,6 +88,15 @@ export async function POST(req: Request) {
         buyer: { select: { id: true, firstname: true, lastname: true } },
         seller: { select: { id: true, firstname: true, lastname: true } },
       },
+    });
+
+    // Notify the seller about the new review
+    const buyerName = [user.firstname, user.lastname].filter(Boolean).join(" ") || "A buyer";
+
+    notify({
+      userId: sellerId,
+      type: "REVIEW_RECEIVED",
+      message: `${buyerName} left you a ${rating}-star review: "${comment ? comment.slice(0, 60) + (comment.length > 60 ? "..." : "") : "No comment"}"`,
     });
 
     return NextResponse.json(
