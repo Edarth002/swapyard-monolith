@@ -16,6 +16,7 @@ import {
   AppError,
 } from "@/lib/errors";
 import { z } from "zod";
+import { notify, NotificationType } from "@/lib/notification";
 
 export const runtime = "nodejs";
 
@@ -300,6 +301,14 @@ export async function PATCH(
       }
     }
 
+    if (status && status !== existing.status) {
+      notify({
+        userId: user.id,
+        type: "LISTING_UPDATED",
+        message: `Your listing "${listing.name}" status has been changed to ${status}.`,
+      });
+    }
+
     return NextResponse.json(
       {
         ok: true,
@@ -319,7 +328,6 @@ export async function PATCH(
     return handleRouteError(err);
   }
 }
-
 export async function DELETE(
   req: Request,
   ctx: { params: Promise<{ id: string }> }
@@ -333,7 +341,16 @@ export async function DELETE(
         id,
         sellerId: user.id,
       },
-      select: { id: true },
+      select: { 
+        id: true, 
+        name: true,
+        // Find all buyers who currently have this in their cart
+        cartItems: {
+          select: {
+            cart: { select: { buyerId: true } },
+          },
+        },
+      },
     });
 
     if (!existing) {
@@ -350,6 +367,21 @@ export async function DELETE(
         data: { status: "REMOVED" },
       });
     });
+
+    // Notify buyers whose cart items were removed
+    const affectedBuyerIds = [
+      ...new Set(existing.cartItems.map((ci) => ci.cart.buyerId)),
+    ];
+
+    if (affectedBuyerIds.length > 0) {
+      notify(
+        affectedBuyerIds.map((buyerId) => ({
+          userId: buyerId,
+          type: "CART_ITEM_UNAVAILABLE",
+          message: `An item in your cart ("${existing.name}") was removed by the seller.`,
+        }))
+      );
+    }
 
     return NextResponse.json(
       {

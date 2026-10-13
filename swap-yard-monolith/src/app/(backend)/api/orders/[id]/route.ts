@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import type { OrderStatus } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { verifyToken } from "@/lib/token";
 import { updateOrderSchema } from "../schema";
@@ -7,15 +8,88 @@ import {
   UnauthorizedError,
   ForbiddenError,
   NotFoundError,
+  ConflictError,
   AppError,
 } from "@/lib/errors";
 import { z } from "zod";
+import {
+  notify,
+  NotificationType,
+  shortOrderId,
+  type NotificationInput,
+  type NotificationTypeValue,
+} from "@/lib/notification";
 
 export const runtime = "nodejs";
 
 const idParamSchema = z.object({
   id: z.string().trim().cuid({ message: "Invalid order ID format" }),
 });
+
+interface StatusNotificationTemplate {
+  type: NotificationTypeValue;
+  buyerMessage: (ref: string) => string;
+  sellerMessage: (ref: string) => string;
+}
+
+const STATUS_NOTIFICATIONS: Partial<Record<OrderStatus, StatusNotificationTemplate>> = {
+  SHIPPED: {
+    type: NotificationType.ORDER_SHIPPED,
+    buyerMessage: (ref) => `Your order ${ref} has been shipped.`,
+    sellerMessage: (ref) => `Order ${ref} has been marked as shipped.`,
+  },
+  DELIVERED: {
+    type: NotificationType.ORDER_DELIVERED,
+    buyerMessage: (ref) =>
+      `Your order ${ref} has been marked as delivered. Please confirm receipt.`,
+    sellerMessage: (ref) => `Order ${ref} has been marked as delivered.`,
+  },
+  COMPLETED: {
+    type: NotificationType.ORDER_COMPLETED,
+    buyerMessage: (ref) => `Your order ${ref} is complete.`,
+    sellerMessage: (ref) => `Order ${ref} has been marked as completed.`,
+  },
+  CANCELLED: {
+    type: NotificationType.ORDER_CANCELLED,
+    buyerMessage: (ref) => `Your order ${ref} has been cancelled.`,
+    sellerMessage: (ref) => `Order ${ref} has been cancelled.`,
+  },
+};
+
+function buildStatusNotifications(params: {
+  orderId: string;
+  buyerId: string;
+  sellerIds: string[];
+  previousStatus: OrderStatus;
+  newStatus: OrderStatus;
+  actorId: string;
+}): NotificationInput[] {
+  const template = STATUS_NOTIFICATIONS[params.newStatus];
+  if (!template) return [];
+
+  const ref = shortOrderId(params.orderId);
+  const sellersKnowOfOrder = params.previousStatus !== "PENDING_PAYMENT";
+
+  const recipients: NotificationInput[] = [
+    {
+      userId: params.buyerId,
+      type: template.type,
+      message: template.buyerMessage(ref),
+    },
+  ];
+
+  if (sellersKnowOfOrder) {
+    for (const sellerId of params.sellerIds) {
+      recipients.push({
+        userId: sellerId,
+        type: template.type,
+        message: template.sellerMessage(ref),
+      });
+    }
+  }
+
+  return recipients.filter((n) => n.userId !== params.actorId);
+}
 
 async function getCookie(req: Request, name: string) {
   const cookie = req.headers.get("cookie");
@@ -52,9 +126,8 @@ export async function GET(
   ctx: { params: Promise<{ id: string }> }
 ) {
   try {
-    const { id } = idParamSchema.parse(await ctx.params);
-
     const user = await getAuthenticatedUser(req);
+    const { id } = idParamSchema.parse(await ctx.params);
 
     const order = await prisma.order.findUnique({
       where: { id },
@@ -106,11 +179,9 @@ export async function PATCH(
   ctx: { params: Promise<{ id: string }> }
 ) {
   try {
-    const { id } = idParamSchema.parse(await ctx.params);
-    const body = await req.json();
-    const { status: newStatus } = updateOrderSchema.parse(body);
-
     const user = await getAuthenticatedUser(req);
+    const { id } = idParamSchema.parse(await ctx.params);
+    const { status: newStatus } = updateOrderSchema.parse(await req.json());
 
     const existingOrder = await prisma.order.findFirst({
       where: {
@@ -134,6 +205,10 @@ export async function PATCH(
     const isBuyer = existingOrder.buyerId === user.id;
     const isSeller = existingOrder.items.some((item) => item.sellerId === user.id);
     const currentStatus = existingOrder.status;
+
+    if (currentStatus === newStatus) {
+      throw new ConflictError(`Order is already ${newStatus}`);
+    }
 
     if (user.role !== "ADMIN") {
       if (newStatus === "SHIPPED") {
@@ -178,22 +253,30 @@ export async function PATCH(
 
     const order = await prisma.$transaction(
       async (tx) => {
+        const { count } = await tx.order.updateMany({
+          where: { id, status: currentStatus },
+          data: updateData,
+        });
+
+        if (count === 0) {
+          throw new ConflictError(
+            "Order status changed while processing. Please refresh and try again."
+          );
+        }
+
         if (newStatus === "CANCELLED" || newStatus === "REFUNDED") {
-          const listingIds = (existingOrder.items ?? [])
-            .map((item) => item.listingId)
-            .filter((lid): lid is string => Boolean(lid));
+          const listingIds = existingOrder.items.map((item) => item.listingId);
 
           if (listingIds.length > 0) {
             await tx.listing.updateMany({
-              where: { id: { in: listingIds } },
+              where: { id: { in: listingIds }, status: "SOLD" },
               data: { status: "AVAILABLE" },
             });
           }
         }
 
-        return await tx.order.update({
+        return tx.order.findUniqueOrThrow({
           where: { id },
-          data: updateData,
           include: {
             buyer: {
               select: { id: true, firstname: true, lastname: true, email: true },
@@ -211,6 +294,17 @@ export async function PATCH(
         });
       },
       { timeout: 10000 }
+    );
+
+    await notify(
+      buildStatusNotifications({
+        orderId: order.id,
+        buyerId: order.buyerId,
+        sellerIds: [...new Set(order.items.map((item) => item.sellerId))],
+        previousStatus: currentStatus,
+        newStatus,
+        actorId: user.id,
+      })
     );
 
     return NextResponse.json(
